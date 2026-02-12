@@ -1,5 +1,8 @@
 name: Compile LaTeX
 
+permissions:
+  contents: write
+
 on:
   push:
     branches:
@@ -22,15 +25,31 @@ jobs:
         with:
           root_file: assignment_1/report/main.tex
           
-      - name: Debug: list files
+      - name: "Debug: list files"
         run: ls -R assignment_1/report
         
       - name: Commit PDF
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          # Add all PDFs found in the repo
-          find . -name "*.pdf" -print -exec git add {} \;
-          git diff --cached --quiet || git commit -m "Auto-update PDF"
-          git push
 
+          # Collect PDFs created in the repo (safe against no matches)
+          pdfs=()
+          while IFS= read -r -d $'\0' f; do
+            pdfs+=("$f")
+          done < <(find . -type f -name "*.pdf" -print0)
+
+          if [ ${#pdfs[@]} -eq 0 ]; then
+            echo "No PDFs found, nothing to commit"
+            exit 0
+          fi
+
+          # Stage the PDFs and commit only if there are changes
+          git add "${pdfs[@]}"
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+
+          git commit -m "Auto-update PDF"
+          git push
