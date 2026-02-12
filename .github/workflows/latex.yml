@@ -16,7 +16,7 @@ jobs:
       - name: Compile LaTeX document
         uses: xu-cheng/latex-action@v2
         with:
-          root_file: assignment 1/report/main.tex
+          root_file: assignment_1/report/main.tex
 
       - name: Commit PDF
         run: |
