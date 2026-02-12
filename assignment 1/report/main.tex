@@ -1,0 +1,143 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%       UNIVERSITY OF AMSTERDAM ASSIGNMENT TEMPLATE      %
+%            (VERSION WITH LOGO INTEGRATION)             %
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% NOTE: You must have an image file named "uva_logo.png"
+% in the same directory as this .tex file for it to compile.
+
+\documentclass[11pt, a4paper]{article}
+\setlength{\headheight}{26.84232pt}
+%=========== REQUIRED PACKAGES ===========%
+\usepackage[utf8]{inputenc} % For text encoding
+\usepackage{amsmath}        % For advanced math typography
+\usepackage{graphicx}       % To include images
+\usepackage[margin=1in]{geometry} % To set page margins
+\usepackage{fancyhdr}       % To customize headers and footers
+\usepackage{lastpage}       % To get the total number of pages
+\usepackage{hyperref}       % For clickable links and table of contents
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,      
+    urlcolor=cyan,
+}
+
+%=========== TITLE PAGE INFORMATION ===========%
+%--- Fill in your details here ---
+\newcommand{\studentName}{Name} % [cite: 1]
+\newcommand{\studentLastname}{Lastname} % [cite: 2]
+\newcommand{\studentID}{12345678} % [cite: 2]
+\newcommand{\reportTitle}{Your Report Title Here} % [cite: 5]
+\newcommand{\courseName}{Introduction to Computational Science} % [cite: 10, 11]
+\newcommand{\courseCode}{XXXX} % [cite: 13]
+\newcommand{\lecturerName}{Valeria Krzhizhanovskaya} % [cite: 8]
+
+
+%=========== HEADER AND FOOTER CONFIGURATION ===========%
+\pagestyle{fancy} % Apply the fancy page style
+\fancyhf{} % Clear all header and footer fields
+
+%--- Header ---
+% Logo in the left header [cite: 16, 27]
+\lhead{\includegraphics[height=0.8cm]{Hippo_JPG-uvalogo_regular_p_en.jpg}} 
+\rhead{ASSIGNMENT | REPORT} % [cite: 24, 28]
+
+%--- Footer ---
+\lfoot{\studentName\ \studentLastname} % [cite: 25, 29]
+\rfoot{PAGE \thepage\ OF \pageref{LastPage}} % [cite: 14, 26, 30]
+
+%--- Rule settings ---
+\renewcommand{\headrulewidth}{0.4pt} % Line under the header
+\renewcommand{\footrulewidth}{0.4pt} % Line above the footer
+
+
+%=========== DOCUMENT START ===========%
+\begin{document}
+
+%=========== TITLE PAGE ===========%
+\begin{titlepage}
+    \centering
+    \vspace*{2cm}
+    
+    % University Logo [cite: 3]
+    \includegraphics[width=7cm]{Hippo_JPG-uvalogo_regular_p_en.jpg}\par
+    
+    \vspace{2.5cm}
+    
+    % Report Type [cite: 4]
+    {\Huge\bfseries REPORT\par}
+    
+    \vfill % Pushes content to the vertical center
+    
+    % Report Title [cite: 5]
+    {\LARGE\bfseries \reportTitle\par}
+    
+    \vfill
+    
+    % Author and Course Details
+    \begin{minipage}{0.6\textwidth}
+        \begin{flushleft} \large
+            \emph{Student:} \\ % [cite: 1]
+            \studentName\ \studentLastname \\ % [cite: 1, 2]
+            Student ID: \studentID \\[1cm] % [cite: 2]
+            
+            \emph{Lecturer:} \lecturerName \\[1cm] % [cite: 7, 8]
+            
+            \emph{Course:} \\ % [cite: 9]
+            \courseName \\ % [cite: 10, 11]
+            
+        \end{flushleft}
+    \end{minipage}
+    
+    \vfill
+    
+    % Date [cite: 6]
+    {\large \today}
+    
+    % Set the footer for the title page specifically
+    \thispagestyle{fancy}
+\end{titlepage}
+
+
+%=========== TABLE OF CONTENTS ===========%
+\newpage
+\tableofcontents
+\newpage
+
+%=========== MAIN CONTENT SECTIONS ===========%
+% The structure below is based on the second page of the document.
+
+\section{Introduction} % [cite: 17]
+\label{sec:introduction}
+Your introduction goes here. State the problem, your approach, and the structure of the report.
+
+\section{Theory} % [cite: 18]
+\label{sec:theory}
+Explain the theoretical concepts, models, and equations relevant to your work. For example, the formula for gravitational force is $F = G \frac{m_1 m_2}{r^2}$.
+
+\section{Numerical methods} % [cite: 19]
+\label{sec:methods}
+Describe the numerical methods and algorithms you used to solve the problem. Include implementation details.
+
+\section{Results and discussion} % [cite: 20]
+\label{sec:results}
+Present your findings using figures, tables, and graphs. Discuss what these results mean and interpret them in the context of the theory.
+
+\section{Conclusions} % [cite: 22]
+\label{sec:conclusions}
+Summarize your key findings and conclude the report. You can also suggest potential future work.
+
+%=========== REFERENCES ===========%
+% Using the `thebibliography` environment for manual references.
+\begin{thebibliography}{9} % [cite: 23]
+
+\bibitem{key1}
+Author, A. N. (Year). \textit{Title of work}. Publisher.
+
+\bibitem{key2}
+Second, A. U. Thor, \& Third, C. O. Author (Year). Title of article. \textit{Journal Name}, Volume(Issue), pages.
+
+\end{thebibliography}
+
+\end{document}
