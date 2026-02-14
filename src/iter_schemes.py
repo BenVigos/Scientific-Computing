@@ -2,6 +2,8 @@ from .grid import make_grid
 import numpy as np
 
 
+# make prints toggable later ig 
+
 def convergence_check(c_new, c_old):
     return np.max(np.abs(c_new - c_old))
 
@@ -29,7 +31,7 @@ def jacobi(N, tol=1e-5, max_iter=10000):
         deltas.append(delta)
 
         if delta < tol:
-            print(f"Jacobi scheme converged in {k} iterations")
+            # print(f"Jacobi scheme converged in {k} iterations")
             break
 
         c[:] = c_new[:]
@@ -61,7 +63,7 @@ def gauss_seidel(N, tol=1e-5, max_iter=10000):
         deltas.append(delta)
 
         if delta < tol:
-            print(f"Gauss-Seidel scheme converged in {k} iterations")
+            # print(f"Gauss-Seidel scheme converged in {k} iterations")
             break
 
     return c, deltas
@@ -93,7 +95,7 @@ def sor(N, omega, tol=1e-5, max_iter=10000):
         deltas.append(delta)
 
         if delta < tol:
-            print(f"SOR (ω={omega}) scheme converged in {k} iterations")
+            # print(f"SOR (ω={omega}) scheme converged in {k} iterations")
             break
 
     return c, deltas
