@@ -98,4 +98,7 @@ def sor(N, omega, tol=1e-5, max_iter=10000):
             # print(f"SOR (ω={omega}) scheme converged in {k} iterations")
             break
 
-    return c, deltas
+        if k >= max_iter:
+            return np.inf
+
+    return c, deltas, k
