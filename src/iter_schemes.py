@@ -1,4 +1,4 @@
-from .grid import make_grid
+from .grid import make_grid, empty_sink
 import numpy as np
 
 
@@ -69,8 +69,13 @@ def gauss_seidel(N, tol=1e-5, max_iter=10000):
     return c, deltas
 
 
-def sor(N, omega, tol=1e-5, max_iter=10000):
+def sor(N, omega, tol=1e-5, max_iter=10000, sink=None):
     c = make_grid(N)
+
+    if sink is None:
+        sink = empty_sink(N)
+    
+    c[sink] = 0
 
     deltas = []
 
@@ -79,7 +84,11 @@ def sor(N, omega, tol=1e-5, max_iter=10000):
         c_old = c.copy()
 
         for i in range(N):
-            for j in range(1, N-1):
+            for j in range(1, N-1):\
+
+                if sink[i, j]:
+                    c[i, j] = 0.0
+                    continue
 
                 ip = (i + 1) % N
                 im = (i - 1) % N
