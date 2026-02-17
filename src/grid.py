@@ -27,5 +27,5 @@ def rectangle_sink(N, x0, x1, y0, y1):
 def combine_sinks(*sinks):
     out = np.zeros_like(sinks[0], dtype=bool)
     for s in sinks:
-        out |= m
+        out |= s
     return out
