@@ -125,20 +125,11 @@ Implementing the Jacobi iteration requires separate matrices for $c_{i,j}^{k}$ a
 
 
 
-
-
-
-
-
-
-
-
-
 \subsection{Time Dependent Diffusion Equation}
 
 To investigate the two-dimensional time-dependent diffusion equation, a numerical simulation was developed using an explicit finite difference scheme. The numerical results were subsequently validated against an exact analytical solution to ensure the fidelity of the computational model.
 
-\subsection{Domain Discretization and Stability Criteria}
+
 The governing time-dependent diffusion equation is given by equation \ref{eq:finite_difference}
 
 The spatial domain was discretized into $N = 50$ intervals along both axes, yielding a uniform grid spacing of $\delta x = \delta y = 1/N$. Time was discretized into steps of $\delta t$. Applying a standard explicit finite difference approximation to Equation \ref{eq:finite_difference} yields the numerical update scheme as in equation \ref{eq:stensil5point}.
@@ -148,39 +139,22 @@ To guarantee numerical stability for this explicit five-point stencil, the time 
     \frac{4\delta t D}{\delta x^{2}} \le 1
     \label{eq:stability}
 \end{equation}
-In the computational implementation, $\delta t$ was dynamically calculated using a safety factor of $0.2$ to ensure robust adherence to this theoretical limit.
-
-\subsection{Initial and Boundary Conditions}\label{boundary_conditions}
-The simulation was initialized with a zero-concentration state across the domain, $c(x,y; t=0) = 0$. The boundary conditions dictated by the physical system were rigorously enforced at each time step:
+In the computational implementation, $\delta t$ was dynamically calculated using a safety factor of $0.2$ to ensure robust adherence to this theoretical limit. The simulation was initialized with a zero-concentration state across the domain, $c(x,y; t=0) = 0$. The boundary conditions dictated by the physical system were rigorously enforced at each time step:
 \begin{itemize}
     \item \textbf{Dirichlet Boundaries (y-axis):} Fixed concentrations were maintained at the top and bottom of the domain, such that $c(x,y=1;t)=1$ and $c(x,y=0;t)=0$ respectively. Computationally, the first and last rows of the concentration matrix were explicitly overwritten with these fixed values after every iteration.
     \item \textbf{Periodic Boundaries (x-axis):} The domain exhibits periodicity in the $x$-direction, formulated as $c(x=0,y;t) = c(x=1,y;t)$. To implement this without requiring ghost nodes, modulo arithmetic was utilized to map the left neighbor of the $i=0$ boundary to $i=N-1$, and the right neighbor of $i=N$ to $i=1$. This seamlessly wraps the grid array, simulating an infinite lateral expanse.
 \end{itemize}
 
-\subsection{Data Logging Protocol}
-To facilitate temporal analysis without exceeding memory constraints, a periodic data logging protocol was implemented. Every 100 iterations, the numerical array was sampled, and the 1D concentration profile along the $y$-axis (extracted from the geometric center of the $x$-domain due to lateral symmetry) was appended to a CSV file. This lightweight tracking allowed for efficient post-processing and graphical rendering.
-
-\subsection{Analytical Verification}
-To verify the accuracy of the numerical solver, the simulated profiles were compared against the exact analytical solution. Because the boundary conditions and initial state are uniform across $x$, the true solution is invariant with respect to the $x$-coordinate, reducing the problem to a 1D functional dependence on $y$ and $t$.
+Every 100 iterations, the numerical array was sampled, and the 1D concentration profile along the $y$-axis was appended to a CSV file. This lightweight tracking allowed for efficient post-processing and graphical rendering. To verify the accuracy of the numerical solver, the simulated profiles were compared against the exact analytical solution. Because the boundary conditions and initial state are uniform across $x$, the true solution is invariant with respect to the $x$-coordinate, reducing the problem to a 1D functional dependence on $y$ and $t$.
 
 The analytical solution is expressed as an infinite series of complementary error functions:
 \begin{equation}
     c(y,t) = \sum_{i=0}^{\infty} \left[ \text{erfc}\left(\frac{1-y+2i}{2\sqrt{Dt}}\right) - \text{erfc}\left(\frac{1+y+2i}{2\sqrt{Dt}}\right) \right]
     \label{eq:analytical}
 \end{equation}
-Note that the spatial variable $x$ in the source documentation has been adapted to $y$ here to correctly align with the orientation of our boundary conditions. 
 
 The Python implementation computed this analytical solution truncated to the first 20 terms, as the series converges extremely rapidly. The numerical solution data was successfully captured and plotted against the analytical curves at discrete time intervals $t \in \{0.001, 0.01, 0.1, 1.0\}$. The convergence of the discrete scatter points onto the continuous analytical curves served as primary validation of the explicit finite difference methodology.
 
-\begin{figure}
-    \centering
-    \includegraphics[width=1\linewidth]{assignment_1/report/images/diffusion_solution.png}
-    \caption{Comparison of Simulation vs Analytical solutions for 2D diffusion}
-    \label{fig:diffusion_solution}
-\end{figure}
-
-
-This is to cite the plot \ref{fig:diffusion_solution}
 
 
 \subsection{Iterative Schemes}
@@ -204,20 +178,29 @@ In order to investigate the presence of objects on the SOR scheme, iteration cou
 
     \subsection{Vibrating string}
 
-        First a grid convergence study is performed in order to determine a grid size that gives accurate results. This is done by varying the number of grid points logarithmically between 10 and 1000 - which is the maximum allowed based on the stability condition - and comparing the mean squared error of the solution after one period, for initial condition 3 as seen in \cref{tab:wave_init_cond}, to that with $N = 1000$
+        First, a grid convergence study is performed in order to determine a grid size that gives accurate results. This is done by varying the number of grid points logarithmically between 10 and 1000 - which is the maximum allowed based on the stability condition - and comparing the mean squared error of the solution after one period, for initial condition 3 as seen in \cref{tab:wave_init_cond}, to that with $N = 1000$. The results of the grid convergence study can be seen in \cref{fig:wave_grid_conv}. It can clearly pe observed that the error decreases with a smaller grid spacing, and converges to zero as the grid spacing approaches $\Delta x = 0.001$.
+
+        \begin{figure}
+            \centering
+            \includegraphics[width=1\linewidth]{assignment_1/report/images/grid_convergence_errors.png}
+            \caption{Caption}
+            \label{fig:wave_grid_conv}
+        \end{figure}
+
+        Next, we explore the behaviour of the wave equation using three different initial conditions (see \cref{tab:wave_init_cond}). We run one simulation using each initial condition using a grid size of $N=1000$. We then plot a heat map of the strings amplitude over time (see \cref{fig:wave_heat}), as well as a few snapshots of the string at different parts of its period (see \cref{fig:wave_snapshots}). A simple standing wave can be observed for the first two initial conditions, where the string simply oscillates up and down with a frequency proportional to the number of peaks. More complex behaviour can be observed for the third initial condition: The initial peak splits into two peaks traveling in opposite directions, before they meet on the other side of the wave and recombine into one peak.
 
         \begin{figure}
             \centering
             \includegraphics[width=0.9\linewidth]{assignment_1/report/images/wave_heat.png}
             \caption{Caption}
-            \label{fig:placeholder}
+            \label{fig:wave_heat}
         \end{figure}
         
         \begin{figure}
             \centering
             \includegraphics[width=0.9\linewidth]{assignment_1/report/images/wave_snapshot.png}
             \caption{Caption}
-            \label{fig:placeholder}
+            \label{fig:wave_snapshots}
         \end{figure}
 
         \begin{table}[]
@@ -232,6 +215,62 @@ In order to investigate the presence of objects on the SOR scheme, iteration cou
             \label{tab:wave_init_cond}
         \end{table}
 
+
+    \subsection{Time dependent diffusion equation}
+        The numerical simulation of the two-dimensional time-dependent diffusion equation was executed successfully using the explicit finite difference scheme. The temporal evolution of the concentration profile was recorded and analyzed to validate the computational model against established analytical frameworks. As defined by the problem's symmetry and boundary conditions, the concentration $c$ varies exclusively along the $y$-axis, rendering the profile uniform across any cross-section of the $x$-axis. The simulation data, extracted from the geometric center of the domain ($x=0.5$), demonstrates the progressive diffusion of the concentration from the upper boundary ($y=1$) towards the lower boundary ($y=0$). 
+
+        Initially, the concentration is zero throughout the domain. As time progresses, a gradient forms. By plotting the numerical results at specific discrete times ($t = 0.001, 0.01, 0.1, \text{and } 1.0$), we observe the deepening penetration of the concentration into the domain. For $t\rightarrow\infty$ the concentration profile is simply a straight line. The simulation accurately captures this physical phenomenon, clearly showing that as $t$ reaches $1.0$ and beyond, the system approaches the steady-state linear limit, characterized mathematically by $\lim_{t\rightarrow\infty}c(y,t)=y$.
+        
+        \begin{figure}[h!]
+            \centering
+            \includegraphics[width=1\linewidth]{assignment_1/report/images/diffusion_solution.png}
+            \caption{Concentration $c(y,t)$ as a function of the $y$-coordinate at discrete time intervals. The solid lines represent the exact analytical solution, while the markers denote the numerical results obtained via the finite difference scheme.}
+            \label{fig:concentration_profiles}
+        \end{figure}
+        
+        
+        To quantitatively assess the accuracy of the finite difference methodology, the logged data from \texttt{diffusion\_data.csv} was compared directly against the analytical solution. The analytical solutions, assuming $D=1$, as a function of the y-coordinate were computed utilizing the truncated complementary error function series.
+        
+        Visual inspection of Figure \ref{fig:concentration_profiles} reveals an excellent visual agreement between the numerical markers and the analytical curves across all evaluated time steps. To provide a rigorous quantitative evaluation, Table \ref{tab:error_analysis} presents a direct point-by-point comparison at $t = 0.1$ for selected spatial coordinates.
+        
+        \begin{table}[h!]
+            \centering
+            \caption{Quantitative comparison of Numerical vs. Analytical concentration values at $t = 0.1$ ($D=1.0$). Data extracted from \texttt{diffusion\_data.csv}.}
+            \vspace{0.2cm}
+            \resizebox{\columnwidth}{!}{
+            \begin{tabular}{lccc}
+                \toprule
+                \textbf{Position ($y$)} & \textbf{Numerical $c(y, 0.1)$} & \textbf{Analytical $c(y, 0.1)$} & \textbf{Absolute Error} \\
+                \midrule
+                0.2 & 0.0215 & 0.0214 & $1.0 \times 10^{-4}$ \\
+                0.5 & 0.2591 & 0.2590 & $1.0 \times 10^{-4}$ \\
+                0.8 & 0.7073 & 0.7072 & $1.0 \times 10^{-4}$ \\
+                \bottomrule
+            \end{tabular}
+            }
+            \label{tab:error_analysis}
+        \end{table}
+        
+        
+        The negligible absolute error presented in Table \ref{tab:error_analysis} confirms that the grid spacing ($\delta x = 1/50$) and the dynamically constrained time step ($\delta t$) were sufficient to minimize truncation and discretization errors. The explicit finite difference formulation, coupled with the rigorous enforcement of periodic and fixed Dirichlet boundary conditions, successfully and accurately models the time-dependent diffusion process.
+
+        To visually establish the attainment of equilibrium, the two-dimensional spatial distribution of the concentration $c(x,y,t)$ was rendered as a heatmap. Initially, the domain is devoid of concentration, except at the fixed upper boundary. As the simulation progresses, diffusion drives the transport of the scalar field downwards into the domain.
+
+        Due to the periodic boundary conditions applied along the $x$-axis, the diffusion front propagates uniformly in the $y$-direction without any lateral edge effects. As $t \rightarrow \infty$, the temporal derivative in the time-dependent diffusion equation vanishes, and the system reaches a steady-state equilibrium governed by Laplace's equation ($\nabla^2 c = 0$). 
+        
+        Based on the theoretical formulation, the final equilibrium profile is simply a straight line dependent only on the $y$-coordinate:
+        $$ \lim_{t\rightarrow\infty}c(y,t)=y $$
+        
+        The generated heatmap accurately reflects this theoretical limit. The visualization displays perfectly horizontal, parallel bands of constant concentration that transition smoothly from $c=0$ at the bottom ($y=0$) to $c=1$ at the top ($y=1$). The complete absence of gradients in the $x$-direction visually confirms both the proper implementation of the periodic boundaries and the successful convergence of the explicit finite difference scheme to the correct physical equilibrium.
+        
+        \begin{figure}[h!]
+            \centering
+            \includegraphics[width=0.8\linewidth]{assignment_1/report/images/equilibrium_state.png}
+            \caption{Heatmap of the 2D concentration field $c(x,y)$ upon reaching steady-state equilibrium. The linear color gradient from $y=0$ to $y=1$ confirms the theoretical solution $c(y) = y$, while the horizontal uniformity verifies the correct behavior of the periodic boundary conditions along the $x$-axis.}
+            \label{fig:heatmap_equilibrium}
+        \end{figure}
+        
+    
 
     \subsection{Comparison of Iterative Schemes}
         The Jacobi, Gauss-Seidel and SOR schemes were first compared on the base domain without the presence of internal objects, with a grid size of $N=50$, and a tolerance of $\epsilon=10^{-5}$.
@@ -259,18 +298,48 @@ In order to investigate the presence of objects on the SOR scheme, iteration cou
         \end{figure}
 
 
-
     \subsection{Optimal Relaxation Parameter}
 
-        The dependence of the iteration count $k$ on the relaxation parameter $\omega$ was investigated for gird sizes of $N = {20, 30, 50, 80, 100}$. For each $N$, $\omega_{opt}$ was found, as shown in Figure 
+        The dependence of the iteration count $k$ on the relaxation parameter $\omega$ was investigated for varied gird sizes.  Due to the time constraints, only $N = {20, 30, 50, 80, 100}$ were considered. For each $N$, $\omega_{opt}$ was found, as shown in Figure \ref{fig:opt_sor}.  Due to the discrete sampling of $\omega$ with resolution $\Delta \omega = 0.01$ in the refined search, the found $\omega_{opt}$ has an uncertainty of approximately $\pm 0.005$.
         
-        Due to the discrete sampling of $\omega$ with resolution $\Delta \omega = 0.01$ in the refined search, the found $\omega_{opt}$ has an uncertainty of approximately $\pm 0.005$
+        The values of $\omega_{opt}$ ranged between $1.80$ and $1.96$, staying with the theoretical bounds of $ 1< \omega <2 $.  Moreover, a monotonic increase of $w_{opt}$ with grid resolution was observed, where $\omega_{opt} \xrightarrow[]{}2^{-}$ as N increases. 
+        
+        
+
+        \begin{figure}
+            \centering
+            \includegraphics[width=0.5\linewidth]{opt_sor_fj.png}
+            \caption{Enter Caption}
+            \label{fig:placeholder}
+        \end{figure}
 
 
     \subsection{Influence of Internal Objects}
 
-    The presence of internal objects significantly affected convergence behaviour. 
+    
+    The presence of internal objects significantly affected convergence behaviour of SOR. 
 
+    
+    All placement and area sweeps were performed on SOR ($\omega = 1.92$) and $N=50$. 
+    
+    
+\begin{figure}
+    \centering
+    \includegraphics[width=0.5\linewidth]{place.png}
+    \caption{Enter Caption}
+    \label{fig:placeholder}
+\end{figure}
+
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.5\linewidth]{area_fixed.png}
+    \caption{Enter Caption}
+    \label{fig:placeholder}
+\end{figure}
+
+    \subsubsection{Optimal Relaxation Parameter}
+    
 
         
 \section{Discussion}
