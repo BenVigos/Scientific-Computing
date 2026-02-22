@@ -63,9 +63,10 @@ time_text = ax.text(0.05, 0.9, "", transform=ax.transAxes, color="white")
 
 current_c = c.copy()
 current_time = 0.0
+equilibrium_reached = False
 
 def animate(frame):
-    global current_c, current_time
+    global current_c, current_time, equilibrium_reached
     
     steps_per_frame = 20
     for _ in range(steps_per_frame):
@@ -78,6 +79,11 @@ def animate(frame):
     error = np.mean(np.abs(current_c[:, N//2] - y))
     if error < 0.01: 
         time_text.set_text(f"Equilibrium Reached (t={current_time:.3f})")
+        if not equilibrium_reached:
+            equilibrium_reached = True
+            fig.savefig("equilibrium_state.png", dpi=150, bbox_inches="tight")
+            print(f"Equilibrium state saved as 'equilibrium_state.png' at t={current_time:.3f}s")
+            ani.event_source.stop()
         
     return im, time_text
 
