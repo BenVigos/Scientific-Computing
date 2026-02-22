@@ -10,22 +10,30 @@ def make_grid(N):
     periodic 
     """
     c = np.zeros((N, N))
-    c[:, 0] = 0       
-    c[:, -1] = 1      
+    c[0, :] = 1      
+    c[-1, :] = 0  
 
     return c
 
 def empty_sink(N):
     return np.zeros((N, N), dtype=bool)
 
-def rectangle_sink(N, x0, x1, y0, y1):
+def rectangle_sink(N, i0, i1, j0, j1):
     s = empty_sink(N)
-    s[x0:x1, y0:y1] = True
+    s[i0:i1, j0:j1] = True
     return s
 
 
-def combine_sinks(*sinks):
+def combine_sinks(*sinks): # do i end up using this or no lol
     out = np.zeros_like(sinks[0], dtype=bool)
     for s in sinks:
         out |= s
     return out
+
+def empty_insulator(N):
+    return np.zeros((N, N), dtype=bool)
+
+def rectangle_insulator(N, i0, i1, j0, j1):
+    m = empty_insulator(N)
+    m[i0:i1, j0:j1] = True
+    return m

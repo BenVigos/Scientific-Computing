@@ -1,4 +1,4 @@
-from .grid import make_grid, empty_sink
+from .grid import make_grid, empty_sink, empty_insulator
 import numpy as np
 
 
@@ -16,22 +16,22 @@ def jacobi(N, tol=1e-5, max_iter=10000):
 
     for k in range(max_iter):
 
-        for i in range(N):
-            for j in range(1, N-1):
-
-                ip = (i + 1) % N
-                im = (i - 1) % N
+        for i in range(1, N-1):
+            for j in range(N):
+                
+                jp = (j + 1) % N
+                jm = (j - 1) % N
 
                 c_new[i, j] = 0.25 * (
-                    c[ip, j] + c[im, j] +
-                    c[i, j+1] + c[i, j-1]
+                    c[i, jp] + c[i, jm] +
+                    c[i+1, j] + c[i-1, j]
                 )
 
         delta = convergence_check(c_new, c)
         deltas.append(delta)
 
         if delta < tol:
-            # print(f"Jacobi scheme converged in {k} iterations")
+            # print(f"Jacobi scheme converged in {k+1} iterations")
             break
 
         c[:] = c_new[:]
@@ -48,66 +48,83 @@ def gauss_seidel(N, tol=1e-5, max_iter=10000):
 
         c_old = c.copy()
 
-        for i in range(N):
-            for j in range(1, N-1):
+        for i in range(1, N-1):
+            for j in range(N):
 
-                ip = (i + 1) % N
-                im = (i - 1) % N
+                jp = (j + 1) % N
+                jm = (j - 1) % N
 
                 c[i, j] = 0.25 * (
-                    c[ip, j] + c[im, j] +
-                    c[i, j+1] + c[i, j-1]
+                    c[i, jp] + c[i, jm] +
+                    c[i+1, j] + c[i-1, j]
                 )
 
         delta = convergence_check(c, c_old)
         deltas.append(delta)
 
         if delta < tol:
-            # print(f"Gauss-Seidel scheme converged in {k} iterations")
+            # print(f"Gauss-Seidel scheme converged in {k+1} iterations")
             break
 
     return c, deltas
 
 
-def sor(N, omega, tol=1e-5, max_iter=10000, sink=None):
+def sor(N, omega, tol=1e-5, max_iter=10000, sink=None, insulator=None, ret_hist=False):
     c = make_grid(N)
 
     if sink is None:
         sink = empty_sink(N)
+
+    if insulator is None:
+        insulator = empty_insulator(N)
     
-    c[sink] = 0
+    c[sink] = 0.0
 
     deltas = []
+    history = []
 
+    converged = False
     for k in range(max_iter):
 
         c_old = c.copy()
 
-        for i in range(N):
-            for j in range(1, N-1):\
+        for i in range(1, N-1):
+            for j in range(N):
 
                 if sink[i, j]:
                     c[i, j] = 0.0
                     continue
 
-                ip = (i + 1) % N
-                im = (i - 1) % N
+                if insulator[i, j]:
+                    continue
 
-                gs_value = 0.25 * (
-                    c[ip, j] + c[im, j] +
-                    c[i, j+1] + c[i, j-1]
-                )
+                jp = (j + 1) % N
+                jm = (j - 1) % N
+
+                cij = c[i, j]
+
+                right = cij if insulator[i, jp] else c[i, jp]
+                left = cij if insulator[i, jm] else c[i, jm]
+                top = cij if insulator[i+1, j] else c[i+1, j]
+                bottom = cij if insulator[i-1, j] else c[i-1, j]
+
+                gs_value = 0.25 * (right + left + top + bottom)
 
                 c[i, j] = omega * gs_value + (1 - omega) * c[i, j]
 
         delta = convergence_check(c, c_old)
         deltas.append(delta)
 
+        if ret_hist:
+            history.append(c.copy())
+
         if delta < tol:
-            # print(f"SOR (ω={omega}) scheme converged in {k} iterations")
+            # print(f"SOR (ω={omega}) scheme converged in {k+1} iterations")
+            converged = True
             break
 
-        if k >= max_iter:
-            return np.inf
+    
+    if ret_hist:
+        return c, deltas, history, k+1, converged
 
-    return c, deltas, k
+    return c, deltas, k+1, converged
