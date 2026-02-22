@@ -1,144 +1,288 @@
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%       UNIVERSITY OF AMSTERDAM ASSIGNMENT TEMPLATE      %
-%            (VERSION WITH LOGO INTEGRATION)             %
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-% NOTE: You must have an image file named "uva_logo.png"
-% in the same directory as this .tex file for it to compile.
-
-\documentclass[11pt, a4paper]{article}
-\setlength{\headheight}{26.84232pt}
-%=========== REQUIRED PACKAGES ===========%
-\usepackage[utf8]{inputenc} % For text encoding
-\usepackage{amsmath}        % For advanced math typography
-\usepackage{graphicx}       % To include images
-\graphicspath{{./assignment_1/report/}}
-\usepackage[margin=1in]{geometry} % To set page margins
-\usepackage{fancyhdr}       % To customize headers and footers
-\usepackage{lastpage}       % To get the total number of pages
-\usepackage{hyperref}       % For clickable links and table of contents
-\hypersetup{
-    colorlinks=true,
-    linkcolor=blue,
-    filecolor=magenta,      
-    urlcolor=cyan,
-}
-
-%=========== TITLE PAGE INFORMATION ===========%
-%--- Fill in your details here ---
-\newcommand{\studentName}{Name} % [cite: 1]
-\newcommand{\studentLastname}{Lastname} % [cite: 2]
-\newcommand{\studentID}{12345678} % [cite: 2]
-\newcommand{\reportTitle}{Your Report Title Here} % [cite: 5]
-\newcommand{\courseName}{Introduction to Computational Science} % [cite: 10, 11]
-\newcommand{\courseCode}{XXXX} % [cite: 13]
-\newcommand{\lecturerName}{Valeria Krzhizhanovskaya} % [cite: 8]
+\documentclass[11pt, journal]{IEEEtran}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage[pdftex]{graphicx}
+\usepackage[cmex10]{amsmath}
+\usepackage{amssymb}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{float}
+\usepackage[hidelinks]{hyperref}
+\usepackage[T1]{fontenc}
+\usepackage{cleveref}
 
 
-%=========== HEADER AND FOOTER CONFIGURATION ===========%
-\pagestyle{fancy} % Apply the fancy page style
-\fancyhf{} % Clear all header and footer fields
-
-%--- Header ---
-% Logo in the left header [cite: 16, 27]
-\lhead{\includegraphics[height=0.8cm]{Hippo_JPG-uvalogo_regular_p_en.jpg}} 
-\rhead{ASSIGNMENT | REPORT} % [cite: 24, 28]
-
-%--- Footer ---
-\lfoot{\studentName\ \studentLastname} % [cite: 25, 29]
-\rfoot{PAGE \thepage\ OF \pageref{LastPage}} % [cite: 14, 26, 30]
-
-%--- Rule settings ---
-\renewcommand{\headrulewidth}{0.4pt} % Line under the header
-\renewcommand{\footrulewidth}{0.4pt} % Line above the footer
-
-
-%=========== DOCUMENT START ===========%
 \begin{document}
 
-%=========== TITLE PAGE ===========%
-\begin{titlepage}
+% paper title
+\title{Scientific Computing Exercise Set 1}
+
+% author names and student numbers (~ won't break up the group of words on new line)
+\author{Abinash~Satapathy~(id) \& Konstantinos~Benjamin~Vigos~(16393929) \& Iga~Pręgowska~(id)}
+
+\IEEEspecialpapernotice{\textbf{Repository}: \url{https://github.com/BenVigos/Scientific-Computing}}
+
+
+% the paper headers
+\markboth{Scientific~Computing~Course | University~of~Amsterdam | 22 Feb,~2026}{}
+
+% make the title area
+\maketitle
+
+\section{Introduction} \label{intro}
+
+\IEEEPARstart{N}{umerical} computations provide an essential framework for solving complex partial differential equations that describe various physical systems. Our investigation begins with the numerical solution of a one-dimensional wave equation, which might describe the vibrations of a uniform string, sound waves in gases or liquids, and the transport of voltage along a lossless transmission line. The continuous solution, $\Psi(x,t)$, represents the vibration amplitude expressed as a function of position and time. To make the problem fully posed, specific boundary conditions are applied on the spatial domain, alongside initial position and velocity distributions. For a string of length $L=1$, the boundaries are fixed such that $\Psi(x=0,t)=0$ and $\Psi(x=L,t)=0$. By introducing a uniform discretization of the spatial and temporal domains, we approximate the partial differential equation using finite difference expressions. The time development of the system is modeled using time-stepping algorithms, including the Leapfrog method. This explicit, second-order symplectic integrator preserves the underlying phase-space structure of Hamiltonian systems. As a result, it keeps the energy error bounded over long simulation times, making it highly effective for conservative and oscillatory systems.
+
+The second phase of this study shifts focus to mass transport, specifically modeling the two-dimensional time dependent diffusion equation. The governing partial differential equation is defined as:
+\begin{equation}
+\frac{\partial c}{\partial t} = D\nabla^{2}c
+\end{equation}
+where $c(x,y;t)$ represents the concentration as a function of coordinates and time, and $D$ is the diffusion constant. The computational domain is restricted to a square where $0\le x, y\le 1$ . The system is subjected to specific boundary constraints: the top of the domain is fixed at $c(x,y=1;t)=1$, and the bottom is fixed at $c(x,y=0;t)=0$ . Additionally, periodic boundary conditions are applied in the x-direction, meaning $c(x=0,y;t)=c(x=1,y;t)$ . We discretize the spatial and temporal domains into intervals of length $\delta x$ and time steps $\delta t$, defining the concentration at discrete points as $c(i\delta x,j\delta x;k\delta t)\equiv c_{i,j}^{k}$ . Utilizing a standard 5-point stencil, we apply the following explicit finite difference scheme:
+\begin{equation}
+c_{i,j}^{k+1}=c_{i,j}^{k}+\frac{\delta tD}{\delta x^{2}}(c_{i+1,j}^{k}+c_{i-1,j}^{k}+c_{i,j+1}^{k}+c_{i,j-1}^{k}-4c_{i,j}^{k})
+\end{equation}
+This calculation scheme relies strictly on local information for updates, making it well-suited for parallel computations. However, the time step is limited by the stability condition $\frac{4\delta tD}{\delta x^{2}}\le 1$ .
+
+When the transient behavior of the concentration profile is not the primary focus, it is more efficient to directly study the steady state by solving the time independent diffusion equation. In this scenario, the system reduces to the Laplace equation:
+\begin{equation}
+\nabla^{2}c=0
+\end{equation}
+Applying the same spatial discretization and evaluating the second-order derivatives yields a simplified set of finite difference equations:
+\begin{equation}
+\frac{1}{4}(c_{i+1,j}+c_{i-1,j}+c_{i,j+1}+c_{i,j-1})=c_{i,j}
+\end{equation}
+To solve this system efficiently and minimize memory demands compared to direct solvers, iterative methods are utilized. The most fundamental approach explored is the Jacobi iteration, defined mathematically as:
+\begin{equation}
+c_{i,j}^{k+1}=\frac{1}{4}(c_{i+1,j}^{k}+c_{i-1,j}^{k}+c_{i,j+1}^{k}+c_{i,j-1}^{k})
+\label{eq:stensil5point}
+\end{equation}
+Unlike time dependent simulations, iterative methods require a global stopping condition to determine convergence. For this study, the solution is considered converged when the maximum change between iterations is smaller than a specified tolerance $\epsilon$:
+\begin{equation}
+\delta\equiv max_{i,j}|c_{i,j}^{k+1}-c_{i,j}^{k}|<\epsilon
+\label{stop}
+\end{equation}
+Implementing the Jacobi iteration requires separate matrices for $c_{i,j}^{k}$ and $c_{i,j}^{k+1}$ to prevent overwriting the necessary values. This foundational setup provides the necessary framework for exploring more advanced and faster-converging iterative algorithms, such as the Gauss-Seidel iteration and Successive Over Relaxation (SOR). Gauss-Seidel method provides marginal improvement over the Jacobi scheme by using updated values in each iteration, removing the need for separate matrices. SOR further generalises Gauss-Seidel by introducing a relaxation parameter $\omega$:
+\begin{equation}
+    c_{i,j}^{k+1}=\frac{\omega}{4}(c_{i+1,j}^{k}+c_{i-1,j}^{k}+c_{i,j+1}^{k}+c_{i,j-1}^{k}) + (1- \omega)c_{i,j}^{k}.
+\end{equation}
+
+\section{Methodology}
+
+\subsection{Vibrating String}
+
+    In order to explore the behaviour of a vibrating string the one-dimensional wave equation is implemented using a second order accurate finite difference method.
+
+    The approximation of the 2nd derivative is derived by summing the Taylor expansions of $f(x+h)$ and $f(x-h)$ around x, and solving for the second derivative, as seen in \cref{eq:2nd_der}
+
+    \begin{align}
+    f^{(2)}(x) = \frac{f(x+h)-2f(x)+f(x-h)}{h^2} + \mathcal{O}(h^2)\label{eq:2nd_der}
+    \end{align}
+
+    Following this process for both the spatial and time derivatives of the wave equation, and writing the results in 
+    vector form, we get:
+
+    \begin{equation}
+        \vec{\psi}_{j}^{i+1} = 2\vec{\psi}_{j}^{n} - \vec{\psi}_{j}^{n-1} + (\frac{c\Delta t}{\Delta x})^2(\mathbf{A}\vec{\psi}^n + \vec{b}),
+    \end{equation} 
+
+    Applied on the interior points, $j = 2, \cdots, n-1$
+
+    Where \[ \mathbf{A} = \frac{1}{\Delta x^2}
+            \begin{bmatrix}
+            -2 & 1  & 0  & \cdots & 0 \\
+            1  & -2 & 1  & \ddots & \vdots \\
+            0  & 1  & -2 & \ddots & 0 \\
+            \vdots & \ddots & \ddots & \ddots & 1 \\
+            0 & \cdots & 0 & 1 & -2
+            \end{bmatrix}
+            \in \mathbb{R}^{(N-2)\times(N-2)}
+            \] and  \[
+                        \vec{b} =
+                        \frac{1}{\Delta x ^2}
+                        \begin{bmatrix}
+                        g_0 \\
+                        0 \\
+                        \vdots \\
+                        0 \\
+                        g_N
+                        \end{bmatrix}
+                        \in \mathbb{R}^{N-2}
+                        \]
+
+    where $N$ is the number of grid points, and $g_0$, and $g_N$, are the Dirichlet boundary conditions of the left and right boundary respectively.
+
+    For all simulations a timestep of $\Delta t = 0.01$, and wave velocity of $c=1$ is used. In order to ensure stability the CFL criterion, as seen in \cref{eq:wave_stability} requires that $\Delta x \geq c\Delta t$ 
+
+    \begin{equation}\label{eq:wave_stability}
+        c\frac{\Delta t}{\Delta x} \leq 1
+    \end{equation}
+
+
+
+    
+
+
+
+
+
+
+
+
+
+
+
+
+\subsection{Time Dependent Diffusion Equation}
+
+To investigate the two-dimensional time-dependent diffusion equation, a numerical simulation was developed using an explicit finite difference scheme. The numerical results were subsequently validated against an exact analytical solution to ensure the fidelity of the computational model.
+
+\subsection{Domain Discretization and Stability Criteria}
+The governing time-dependent diffusion equation is given by equation \ref{eq:finite_difference}
+
+The spatial domain was discretized into $N = 50$ intervals along both axes, yielding a uniform grid spacing of $\delta x = \delta y = 1/N$. Time was discretized into steps of $\delta t$. Applying a standard explicit finite difference approximation to Equation \ref{eq:finite_difference} yields the numerical update scheme as in equation \ref{eq:stensil5point}.
+
+To guarantee numerical stability for this explicit five-point stencil, the time step $\delta t$ must strictly satisfy the von Neumann stability condition:
+\begin{equation}
+    \frac{4\delta t D}{\delta x^{2}} \le 1
+    \label{eq:stability}
+\end{equation}
+In the computational implementation, $\delta t$ was dynamically calculated using a safety factor of $0.2$ to ensure robust adherence to this theoretical limit.
+
+\subsection{Initial and Boundary Conditions}\label{boundary_conditions}
+The simulation was initialized with a zero-concentration state across the domain, $c(x,y; t=0) = 0$. The boundary conditions dictated by the physical system were rigorously enforced at each time step:
+\begin{itemize}
+    \item \textbf{Dirichlet Boundaries (y-axis):} Fixed concentrations were maintained at the top and bottom of the domain, such that $c(x,y=1;t)=1$ and $c(x,y=0;t)=0$ respectively. Computationally, the first and last rows of the concentration matrix were explicitly overwritten with these fixed values after every iteration.
+    \item \textbf{Periodic Boundaries (x-axis):} The domain exhibits periodicity in the $x$-direction, formulated as $c(x=0,y;t) = c(x=1,y;t)$. To implement this without requiring ghost nodes, modulo arithmetic was utilized to map the left neighbor of the $i=0$ boundary to $i=N-1$, and the right neighbor of $i=N$ to $i=1$. This seamlessly wraps the grid array, simulating an infinite lateral expanse.
+\end{itemize}
+
+\subsection{Data Logging Protocol}
+To facilitate temporal analysis without exceeding memory constraints, a periodic data logging protocol was implemented. Every 100 iterations, the numerical array was sampled, and the 1D concentration profile along the $y$-axis (extracted from the geometric center of the $x$-domain due to lateral symmetry) was appended to a CSV file. This lightweight tracking allowed for efficient post-processing and graphical rendering.
+
+\subsection{Analytical Verification}
+To verify the accuracy of the numerical solver, the simulated profiles were compared against the exact analytical solution. Because the boundary conditions and initial state are uniform across $x$, the true solution is invariant with respect to the $x$-coordinate, reducing the problem to a 1D functional dependence on $y$ and $t$.
+
+The analytical solution is expressed as an infinite series of complementary error functions:
+\begin{equation}
+    c(y,t) = \sum_{i=0}^{\infty} \left[ \text{erfc}\left(\frac{1-y+2i}{2\sqrt{Dt}}\right) - \text{erfc}\left(\frac{1+y+2i}{2\sqrt{Dt}}\right) \right]
+    \label{eq:analytical}
+\end{equation}
+Note that the spatial variable $x$ in the source documentation has been adapted to $y$ here to correctly align with the orientation of our boundary conditions. 
+
+The Python implementation computed this analytical solution truncated to the first 20 terms, as the series converges extremely rapidly. The numerical solution data was successfully captured and plotted against the analytical curves at discrete time intervals $t \in \{0.001, 0.01, 0.1, 1.0\}$. The convergence of the discrete scatter points onto the continuous analytical curves served as primary validation of the explicit finite difference methodology.
+
+\begin{figure}
     \centering
-    \vspace*{2cm}
-    
-    % University Logo [cite: 3]
-    \includegraphics[width=7cm]{Hippo_JPG-uvalogo_regular_p_en.jpg}\par
-    
-    \vspace{2.5cm}
-    
-    % Report Type [cite: 4]
-    {\Huge\bfseries REPORT\par}
-    
-    \vfill % Pushes content to the vertical center
-    
-    % Report Title [cite: 5]
-    {\LARGE\bfseries \reportTitle\par}
-    
-    \vfill
-    
-    % Author and Course Details
-    \begin{minipage}{0.6\textwidth}
-        \begin{flushleft} \large
-            \emph{Student:} \\ % [cite: 1]
-            \studentName\ \studentLastname \\ % [cite: 1, 2]
-            Student ID: \studentID \\[1cm] % [cite: 2]
-            
-            \emph{Lecturer:} \lecturerName \\[1cm] % [cite: 7, 8]
-            
-            \emph{Course:} \\ % [cite: 9]
-            \courseName \\ % [cite: 10, 11]
-            
-        \end{flushleft}
-    \end{minipage}
-    
-    \vfill
-    
-    % Date [cite: 6]
-    {\large \today}
-    
-    % Set the footer for the title page specifically
-    \thispagestyle{fancy}
-\end{titlepage}
+    \includegraphics[width=1\linewidth]{assignment_1/report/images/diffusion_solution.png}
+    \caption{Comparison of Simulation vs Analytical solutions for 2D diffusion}
+    \label{fig:diffusion_solution}
+\end{figure}
 
 
-%=========== TABLE OF CONTENTS ===========%
-\newpage
-\tableofcontents
-\newpage
+This is to cite the plot \ref{fig:diffusion_solution}
 
-%=========== MAIN CONTENT SECTIONS ===========%
-% The structure below is based on the second page of the document.
 
-\section{Introduction} % [cite: 17]
-\label{sec:introduction}
-Your introduction goes here. State the problem, your approach, and the structure of the report.
+\subsection{Iterative Schemes}
+The Jacobi, Gauss-Seidel and SOR schemes (see \ref{intro}) were implemented on a $N \times N$ grid with uniform spacing of $\delta x = \delta y = 1/N$.  Veritical and horizontal boundary conditions as described in section \ref{boundary_conditions} were used. The tolerance for a stopping condition (see equation \ref{stop}) was set to $10^{-5}$ across all experiments, and the iteration count $k$ was defined as the number of full traversals of the interior grid points required to reach that tolerance. 
 
-\section{Theory} % [cite: 18]
-\label{sec:theory}
-Explain the theoretical concepts, models, and equations relevant to your work. For example, the formula for gravitational force is $F = G \frac{m_1 m_2}{r^2}$.
+For validation, each scheme was compared against an analytical solution [eq here], and their respective MSEs were plotted point-wise. To further investigate the properties of each scheme, a convergence plot was also created. 
 
-\section{Numerical methods} % [cite: 19]
-\label{sec:methods}
-Describe the numerical methods and algorithms you used to solve the problem. Include implementation details.
+\subsubsection{Relaxation Parameter Dependence}
+The optimal relaxation parameter $\omega_{opt}$ was defined as minimising the value of $k$ needed for SOR convergence for a given problem.To determine the $\omega_{opt}$ an initial sweep was performed over $\omega \in [0.5, 2.5)$ with step size $\Delta \omega =0.05$. Subsequently, a more refined sweep ($\Delta=0.01$) was performed around the vicinity of the $\omega$ resulting in the minimal iteration count. 
 
-\section{Results and discussion} % [cite: 20]
-\label{sec:results}
-Present your findings using figures, tables, and graphs. Discuss what these results mean and interpret them in the context of the theory.
 
-\section{Conclusions} % [cite: 22]
-\label{sec:conclusions}
-Summarize your key findings and conclude the report. You can also suggest potential future work.
 
-%=========== REFERENCES ===========%
-% Using the `thebibliography` environment for manual references.
-\begin{thebibliography}{9} % [cite: 23]
+\subsection{Internal Objects in a Grid}
+Internal objects were encoded using a boolean mask over a computational grid. Two types of objects were considered: sinks and insulators. For sinks, grid points belonging to the object mask were set to zero at each iteration. Insulators were implemented by enforcing a Neumann boundary condition ($\frac{\partial T}{\partial n}$) to equal zero at the grid points encoding edges of the insulator. 
 
-\bibitem{key1}
-Author, A. N. (Year). \textit{Title of work}. Publisher.
+\subsubsection{Influence on the SOR Scheme}
+In order to investigate the presence of objects on the SOR scheme, iteration counts were measured as a function of placement and size and final concentration fields were stored for comparison. 
 
-\bibitem{key2}
-Second, A. U. Thor, \& Third, C. O. Author (Year). Title of article. \textit{Journal Name}, Volume(Issue), pages.
 
-\end{thebibliography}
+\section{Results}
+
+    \subsection{Vibrating string}
+
+        First a grid convergence study is performed in order to determine a grid size that gives accurate results. This is done by varying the number of grid points logarithmically between 10 and 1000 - which is the maximum allowed based on the stability condition - and comparing the mean squared error of the solution after one period, for initial condition 3 as seen in \cref{tab:wave_init_cond}, to that with $N = 1000$
+
+        \begin{figure}
+            \centering
+            \includegraphics[width=0.9\linewidth]{assignment_1/report/images/wave_heat.png}
+            \caption{Caption}
+            \label{fig:placeholder}
+        \end{figure}
+        
+        \begin{figure}
+            \centering
+            \includegraphics[width=0.9\linewidth]{assignment_1/report/images/wave_snapshot.png}
+            \caption{Caption}
+            \label{fig:placeholder}
+        \end{figure}
+
+        \begin{table}[]
+            \centering
+            \caption{Initial conditions used for wave equation}
+            \begin{tabular}{c|c}
+                number &  Initial condition \\\hline    
+                 1     &  $\psi(x, t=0) = \sin{(2\pi x)}$ \\ 
+                 2     &  $\psi(x, t=0) = \sin{(5\pi x)}$ \\
+                 3     &  $\psi(x, t=0) = \sin{(2\pi x)}$ if $1/5 \leq x \leq 2/5$ else $\psi = 0$
+            \end{tabular}
+            \label{tab:wave_init_cond}
+        \end{table}
+
+
+    \subsection{Comparison of Iterative Schemes}
+        The Jacobi, Gauss-Seidel and SOR schemes were first compared on the base domain without the presence of internal objects, with a grid size of $N=50$, and a tolerance of $\epsilon=10^{-5}$.
+        
+        To verify correctness, the numerical steady-state solution obtained from each method was compared against the analytical solution [ref]. The pointwise mean squared error (MSE) distribution is shown in Figure \ref{fig:MSE}. All schemes eventually converged within a specified tolerance, with Jacobi exhibiting the largest peak error, reaching approximately $9.47 \times 10^{-5}$. Gauss-Seidel reduced the peak error to $2.36 \times 10^{-5}$, while SOR ($\omega=1.8$) decreased it further to $2.68 \times 10^{-7}$. In all cases, the error is symmetric with respect to the center of the domain: the error is minimal at the boundaries and maximal at the interior region.
+
+
+        Figure \ref{fig:conv} shows the decay of the convergence measure $\delta$ as a function of iteration count. The Jacobi method showed the slowest convergence for the given problem ($k = 4068$), while Gauss-Seidel converged almost two times faster, with $k=2361$. SOR exhibited a marked decrease in iterations needed with increasing relaxation parameter ($\omega \in {1.2, 1.5, 1.8, 1.9}$), only requiring $k=366$ iterations for the highest $\omega$, making it over 11 times faster than the Jacobi scheme.
+
+        \begin{figure}
+            \centering
+            \includegraphics[width=1\linewidth]{convergence_compare.png}
+            \caption{Enter Caption}
+            \label{fig:conv}
+        \end{figure}
+
+        
+
+
+        \begin{figure}
+            \centering
+            \includegraphics[width=1\linewidth]{mse.png}
+            \caption{Enter Caption}
+            \label{fig:MSE}
+        \end{figure}
+
+
+
+    \subsection{Optimal Relaxation Parameter}
+
+        The dependence of the iteration count $k$ on the relaxation parameter $\omega$ was investigated for gird sizes of $N = {20, 30, 50, 80, 100}$. For each $N$, $\omega_{opt}$ was found, as shown in Figure 
+        
+        Due to the discrete sampling of $\omega$ with resolution $\Delta \omega = 0.01$ in the refined search, the found $\omega_{opt}$ has an uncertainty of approximately $\pm 0.005$
+
+
+    \subsection{Influence of Internal Objects}
+
+    The presence of internal objects significantly affected convergence behaviour. 
+
+
+        
+\section{Discussion}
+
+
+
+\section{Conclusion}
+
+
+\appendix
+
+Extra components
+
 
 \end{document}
