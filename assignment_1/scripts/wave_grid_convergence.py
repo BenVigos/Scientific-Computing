@@ -82,7 +82,7 @@ plt.xscale('log')
 
 
 plt.gca().invert_xaxis()
-plt.xlabel(r'Grid spacing $\Delta_{x}$')
+plt.xlabel(r'Grid spacing $\Delta x$')
 plt.ylabel(r'$\mathcal{L}_2$ error')
 plt.grid(True, which='both', ls='--', lw=0.5)
 plt.legend()
