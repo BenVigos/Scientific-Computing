@@ -31,7 +31,7 @@ def jacobi(N, tol=1e-5, max_iter=10000):
         deltas.append(delta)
 
         if delta < tol:
-            # print(f"Jacobi scheme converged in {k+1} iterations")
+            print(f"Jacobi scheme converged in {k+1} iterations")
             break
 
         c[:] = c_new[:]
@@ -63,7 +63,7 @@ def gauss_seidel(N, tol=1e-5, max_iter=10000):
         deltas.append(delta)
 
         if delta < tol:
-            # print(f"Gauss-Seidel scheme converged in {k+1} iterations")
+            print(f"Gauss-Seidel scheme converged in {k+1} iterations")
             break
 
     return c, deltas
@@ -119,7 +119,7 @@ def sor(N, omega, tol=1e-5, max_iter=10000, sink=None, insulator=None, ret_hist=
             history.append(c.copy())
 
         if delta < tol:
-            # print(f"SOR (ω={omega}) scheme converged in {k+1} iterations")
+            print(f"SOR (ω={omega}) scheme converged in {k+1} iterations")
             converged = True
             break
 
