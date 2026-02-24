@@ -70,6 +70,18 @@ def gauss_seidel(N, tol=1e-5, max_iter=10000):
 
 
 def sor(N, omega = 1, tol=1e-5, max_iter=10000, sink=None, insulator=None, ret_hist=False):
+    """
+    Successive Over-Relaxation (SOR) method for solving the steady-state diffusion equation on a 2D grid with specified boundary conditions, sinks, and insulators.
+
+    :param N: Grid size (NxN)
+    :param omega: Relaxation factor (ω=1 corresponds to Gauss-Seidel, ω>1 is over-relaxation)
+    :param tol: convergence tolerance for the maximum change in concentration between iterations
+    :param max_iter: maximum number of iterations to perform
+    :param sink: mask (boolean 2D array) indicating locations of sinks where concentration is fixed to zero
+    :param insulator: mask (boolean 2D array) indicating locations of insulators where concentration does not change (no flux)
+    :param ret_hist: return history of concentration fields at each iteration (for visualization) if True
+    :return: concentration field after convergence, list of deltas for each iteration, (optionally) history of concentration fields, number of iterations taken, and whether convergence was achieved
+    """
     c = make_grid(N)
 
     if sink is None:

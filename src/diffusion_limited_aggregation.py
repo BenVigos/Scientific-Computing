@@ -12,7 +12,7 @@ def dla_step(grid):
     """
 
     diffusion_grid = grid.copy()
-    diffusion_grid = sor(diffusion_grid, omega= 1.9, max_iter=10000, insulator=grid)
+    diffusion_grid, _, _, _ = sor(diffusion_grid, omega= 1.9, insulator=grid)
 
 def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 10000, stop_threshold: float = 0.5, debug: bool = False):
     """Run a DLA simulation on a grid of given size with a specified number of particles.\n
