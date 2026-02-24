@@ -69,7 +69,7 @@ def gauss_seidel(N, tol=1e-5, max_iter=10000):
     return c, deltas
 
 
-def sor(N, omega, tol=1e-5, max_iter=10000, sink=None, insulator=None, ret_hist=False):
+def sor(N, omega = 1, tol=1e-5, max_iter=10000, sink=None, insulator=None, ret_hist=False):
     c = make_grid(N)
 
     if sink is None:
