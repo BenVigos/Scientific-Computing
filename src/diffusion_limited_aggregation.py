@@ -1,7 +1,8 @@
 import numpy as np
 from iter_schemes import sor
 
-def dla_step(grid):
+
+def dla_step(grid, debug=False):
     """Perform one step of diffusion-limited aggregation (DLA) on the grid.\n
     One step consists of:\n
     1. Solve the time-independent diffusion equation (Laplace's equation) to get the concentration field.\n
@@ -9,10 +10,23 @@ def dla_step(grid):
     3. Randomly select a cell at the growth boundary and add it to the cluster.
 
     :param grid: 2D numpy array representing the current state of the DLA cluster (1 for occupied, 0 for empty).
+    :param debug: Boolean flag to enable debugging.
     """
+    diffusion_grid, _, _, _ = sor(len(grid),omega= 1.9, insulator=grid)
 
-    diffusion_grid = grid.copy()
-    diffusion_grid, _, _, _ = sor(diffusion_grid, omega= 1.9, insulator=grid)
+    #compute sticking probabilities at growth boundary
+    neighbours = outer_neighbors(grid)
+    neighbour_concentrations = neighbours  * diffusion_grid
+
+    if debug:
+        print("Neighbours:")
+        print(neighbours)
+        print("Neighbor concentrations at growth boundary:")
+        print(neighbour_concentrations)
+
+    probabilities = compute_stick_prob(neighbour_concentrations)
+
+    return None
 
 def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 10000, stop_threshold: float = 0.5, debug: bool = False):
     """Run a DLA simulation on a grid of given size with a specified number of particles.\n
@@ -39,7 +53,7 @@ def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 10000
         if debug:
             print(f"Step {i+1}/{steps} ...")
 
-        grid = dla_step(grid)
+        grid = dla_step(grid, debug=debug)
 
         #check stopping condition
         occupied_percentage = np.mean(grid)
@@ -48,5 +62,35 @@ def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 10000
             break
     return grid
 
-def compute_stick_prob(grid, i, j):
+def compute_stick_prob(grid):
     """Compute the sticking probability for a particle at position (x, y) based on neighboring occupied sites."""
+
+def outer_neighbors(A):
+    """
+    Return a boolean matrix where True indicates cells that are adjacent to at least one occupied cell in A, but are not occupied themselves.
+
+    :param A: the input 2D array (boolean or integer) where non-zero/True values indicate occupied cells.
+    :return: matrix of the same shape as A where True indicates cells that are adjacent to at least one occupied cell in A, but are not occupied themselves.
+    """
+    A = A.astype(bool)
+
+    up    = np.pad(A[:-1, :], ((1,0),(0,0)))
+    down  = np.pad(A[1:,  :], ((0,1),(0,0)))
+    left  = np.pad(A[:, :-1], ((0,0),(1,0)))
+    right = np.pad(A[:, 1: ], ((0,0),(0,1)))
+
+    neighbor_has_one = up | down | left | right
+
+    B = neighbor_has_one & (~A)
+    return B.astype(int)
+
+
+if __name__ == '__main__':
+    grid_size = (10, 10)
+    steps = 3
+    stop_threshold = 0.5
+    debug = True
+
+    final_grid = diffusion_limited_aggregation(grid_size, steps, stop_threshold, debug)
+    print("Final DLA cluster:")
+    print(final_grid)

@@ -1,4 +1,4 @@
-from .grid import make_grid, empty_sink, empty_insulator
+from src.grid import make_grid, empty_sink, empty_insulator
 import numpy as np
 
 
@@ -69,7 +69,7 @@ def gauss_seidel(N, tol=1e-5, max_iter=10000):
     return c, deltas
 
 
-def sor(N, omega = 1, tol=1e-5, max_iter=10000, sink=None, insulator=None, ret_hist=False):
+def sor(N, omega = 1, tol=1e-5, max_iter=10000, sink=None, insulator=None, ret_hist=False, init_grid=None):
     """
     Successive Over-Relaxation (SOR) method for solving the steady-state diffusion equation on a 2D grid with specified boundary conditions, sinks, and insulators.
 
@@ -82,7 +82,11 @@ def sor(N, omega = 1, tol=1e-5, max_iter=10000, sink=None, insulator=None, ret_h
     :param ret_hist: return history of concentration fields at each iteration (for visualization) if True
     :return: concentration field after convergence, list of deltas for each iteration, (optionally) history of concentration fields, number of iterations taken, and whether convergence was achieved
     """
-    c = make_grid(N)
+
+    if init_grid is not None:
+        c = init_grid.copy()
+    else:
+        c = make_grid(N)
 
     if sink is None:
         sink = empty_sink(N)
