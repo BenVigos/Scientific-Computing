@@ -1,8 +1,18 @@
 import numpy as np
-from iter_schemes import sor
+from src.iter_schemes import sor
+from tqdm import tqdm
 
 
-def dla_step(grid, debug=False):
+def select_stick_cell(probabilities):
+    flat_probabilities = probabilities.flatten()
+    if flat_probabilities.sum() == 0:
+        assert False, "No valid cells to stick to (all probabilities are zero). Check the concentration field and growth boundary."
+        return
+    selection = np.random.choice(len(flat_probabilities), p=flat_probabilities)
+    row, col = np.unravel_index(selection, probabilities.shape)
+    return row, col
+
+def dla_step(grid, diffusion_grid, debug=False, ita = 1):
     """Perform one step of diffusion-limited aggregation (DLA) on the grid.\n
     One step consists of:\n
     1. Solve the time-independent diffusion equation (Laplace's equation) to get the concentration field.\n
@@ -11,24 +21,26 @@ def dla_step(grid, debug=False):
 
     :param grid: 2D numpy array representing the current state of the DLA cluster (1 for occupied, 0 for empty).
     :param debug: Boolean flag to enable debugging.
+    :param ita: probability exponent
     """
-    diffusion_grid, _, _, _ = sor(len(grid),omega= 1.9, insulator=grid)
+    diffusion_grid, _, _, _ = sor(len(grid),omega= 1.9, insulator=grid, init_grid=diffusion_grid)
 
     #compute sticking probabilities at growth boundary
     neighbours = outer_neighbors(grid)
     neighbour_concentrations = neighbours  * diffusion_grid
 
     if debug:
-        print("Neighbours:")
-        print(neighbours)
         print("Neighbor concentrations at growth boundary:")
         print(neighbour_concentrations)
 
-    probabilities = compute_stick_prob(neighbour_concentrations)
+    probabilities = compute_stick_prob(neighbour_concentrations, ita=ita)
+    selection = select_stick_cell(probabilities)
 
-    return None
+    grid[selection] = 1
 
-def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 10000, stop_threshold: float = 0.5, debug: bool = False):
+    return grid, diffusion_grid
+
+def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 10000, stop_threshold: float = 0.5, debug: bool = False, ita: float = 1):
     """Run a DLA simulation on a grid of given size with a specified number of particles.\n
     The process is as follows:\n
     1. Initialize an empty grid and place a seed particle at the bottom of the computational domain.\n
@@ -39,21 +51,24 @@ def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 10000
     :param steps: number of particles to add to the cluster.
     :param stop_threshold: threshold for stopping the simulation based on the percentage of occupied cells in the grid (between 0 and 1).
     :param debug: boolean flag to print debug information during the simulation.
+    :param ita: probability exponent
     :return: 2D numpy array representing the final state of the DLA cluster
     """
     #initialize grid
     grid = np.zeros(grid_size, dtype=int)
+    diffusion_grid = np.zeros(grid_size, dtype=float)
+    diffusion_grid[0, :] = 1  # set top boundary to concentration 1
 
     #place seed particle at the bottom center
     seed_x = grid_size[0] // 2
     seed_y = grid_size[1] - 1
     grid[seed_y, seed_x] = 1
 
-    for i in range(steps):
+    for i in tqdm(range(steps)):
         if debug:
             print(f"Step {i+1}/{steps} ...")
 
-        grid = dla_step(grid, debug=debug)
+        grid, diffusion_grid = dla_step(grid, diffusion_grid, debug=debug, ita = ita)
 
         #check stopping condition
         occupied_percentage = np.mean(grid)
@@ -62,8 +77,12 @@ def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 10000
             break
     return grid
 
-def compute_stick_prob(grid):
+def compute_stick_prob(concentration_field, ita = 1):
     """Compute the sticking probability for a particle at position (x, y) based on neighboring occupied sites."""
+    concentration_field_exp = np.power(concentration_field, ita)
+    concentration_sum = np.sum(concentration_field_exp)
+    prob = concentration_field_exp/concentration_sum if concentration_sum > 0 else np.zeros_like(concentration_field)
+    return prob
 
 def outer_neighbors(A):
     """
@@ -86,7 +105,7 @@ def outer_neighbors(A):
 
 
 if __name__ == '__main__':
-    grid_size = (10, 10)
+    grid_size = (5, 5)
     steps = 3
     stop_threshold = 0.5
     debug = True

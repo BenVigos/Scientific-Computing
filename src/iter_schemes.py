@@ -80,6 +80,7 @@ def sor(N, omega = 1, tol=1e-5, max_iter=10000, sink=None, insulator=None, ret_h
     :param sink: mask (boolean 2D array) indicating locations of sinks where concentration is fixed to zero
     :param insulator: mask (boolean 2D array) indicating locations of insulators where concentration does not change (no flux)
     :param ret_hist: return history of concentration fields at each iteration (for visualization) if True
+    :param init_grid: optional initial concentration grid (if None, starts with default boundary conditions)
     :return: concentration field after convergence, list of deltas for each iteration, (optionally) history of concentration fields, number of iterations taken, and whether convergence was achieved
     """
 
