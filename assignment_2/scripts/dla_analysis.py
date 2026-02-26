@@ -4,11 +4,11 @@ import numpy as np
 
 if __name__ == '__main__':
     grid_size = (100, 100)
-    steps = 100
+    steps = 500
     stop_threshold = 0.1
     debug = False
-    ita = 1.5
-
+    ita = 2
+    # BUG: when ita is 0 the cluster is disconnected
     final_grid = dla(grid_size, steps, stop_threshold, debug, ita=ita)
 
     plt.imshow(final_grid, cmap='viridis', origin='lower')
