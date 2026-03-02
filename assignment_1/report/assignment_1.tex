@@ -1,4 +1,4 @@
-\documentclass[11pt, journal]{IEEEtran}
+\documentclass[10pt, journal]{IEEEtran}
 \usepackage{xcolor}
 \usepackage{booktabs}
 \usepackage{caption}
@@ -20,7 +20,7 @@
 \title{Scientific Computing Exercise Set 1}
 
 % author names and student numbers (~ won't break up the group of words on new line)
-\author{Abinash~Satapathy~(id) \& Konstantinos~Benjamin~Vigos~(16393929) \& Iga~Pręgowska~(id)}
+\author{Abinash~Satapathy~(13023160) \& Konstantinos~Benjamin~Vigos~(16393929) \& Iga~Pręgowska~(14209462)}
 
 \IEEEspecialpapernotice{\textbf{Repository}: \url{https://github.com/BenVigos/Scientific-Computing}}
 
@@ -33,91 +33,96 @@
 
 \section{Introduction} \label{intro}
 
-\IEEEPARstart{N}{umerical} computations provide an essential framework for solving complex partial differential equations that describe various physical systems. Our investigation begins with the numerical solution of a one-dimensional wave equation, which might describe the vibrations of a uniform string, sound waves in gases or liquids, and the transport of voltage along a lossless transmission line. The continuous solution, $\Psi(x,t)$, represents the vibration amplitude expressed as a function of position and time. To make the problem fully posed, specific boundary conditions are applied on the spatial domain, alongside initial position and velocity distributions. For a string of length $L=1$, the boundaries are fixed such that $\Psi(x=0,t)=0$ and $\Psi(x=L,t)=0$. By introducing a uniform discretization of the spatial and temporal domains, we approximate the partial differential equation using finite difference expressions. The time development of the system is modeled using time-stepping algorithms, including the Leapfrog method. This explicit, second-order symplectic integrator preserves the underlying phase-space structure of Hamiltonian systems. As a result, it keeps the energy error bounded over long simulation times, making it highly effective for conservative and oscillatory systems.
+\IEEEPARstart{N}{umerical} methods provide a practical framework for solving partial differential equations (PDEs) that describe wave propagation, diffusion, and other transport phenomena. In this work, we study three representative problems: the one-dimensional wave equation, the two-dimensional diffusion equation, and iterative methods for solving the Laplace equation.
 
-The second phase of this study shifts focus to mass transport, specifically modeling the two-dimensional time dependent diffusion equation. The governing partial differential equation is defined as:
-\begin{equation}
-\frac{\partial c}{\partial t} = D\nabla^{2}c
-\end{equation}
-where $c(x,y;t)$ represents the concentration as a function of coordinates and time, and $D$ is the diffusion constant. The computational domain is restricted to a square where $0\le x, y\le 1$ . The system is subjected to specific boundary constraints: the top of the domain is fixed at $c(x,y=1;t)=1$, and the bottom is fixed at $c(x,y=0;t)=0$ . Additionally, periodic boundary conditions are applied in the x-direction, meaning $c(x=0,y;t)=c(x=1,y;t)$ . We discretize the spatial and temporal domains into intervals of length $\delta x$ and time steps $\delta t$, defining the concentration at discrete points as $c(i\delta x,j\delta x;k\delta t)\equiv c_{i,j}^{k}$ . Utilizing a standard 5-point stencil, we apply the following explicit finite difference scheme:
-\begin{equation}
-c_{i,j}^{k+1}=c_{i,j}^{k}+\frac{\delta tD}{\delta x^{2}}(c_{i+1,j}^{k}+c_{i-1,j}^{k}+c_{i,j+1}^{k}+c_{i,j-1}^{k}-4c_{i,j}^{k})
-\end{equation}
-This calculation scheme relies strictly on local information for updates, making it well-suited for parallel computations. However, the time step is limited by the stability condition $\frac{4\delta tD}{\delta x^{2}}\le 1$ .
+The first problem considers the one-dimensional wave equation
 
-When the transient behavior of the concentration profile is not the primary focus, it is more efficient to directly study the steady state by solving the time independent diffusion equation. In this scenario, the system reduces to the Laplace equation:
 \begin{equation}
-\nabla^{2}c=0
+\frac{\partial^2 \Psi}{\partial t^2}
+=
+c^2 \frac{\partial^2 \Psi}{\partial x^2},
 \end{equation}
-Applying the same spatial discretization and evaluating the second-order derivatives yields a simplified set of finite difference equations:
+
+which models vibrations of a stretched string of length $L=1$ with fixed boundary conditions $\Psi(0,t)=\Psi(1,t)=0$. The solution $\Psi(x,t)$ represents the displacement of the string. The equation is discretized using second-order central differences in both space and time, resulting in an explicit time-stepping scheme. This method is conditionally stable under the Courant–Friedrichs–Lewy (CFL) condition and is well suited for conservative oscillatory systems due to its second-order accuracy.
+
+The second problem addresses mass transport governed by the two-dimensional diffusion equation
+
 \begin{equation}
-\frac{1}{4}(c_{i+1,j}+c_{i-1,j}+c_{i,j+1}+c_{i,j-1})=c_{i,j}
+\frac{\partial c}{\partial t}
+=
+D \nabla^2 c,
+\label{eq:finite_difference}
 \end{equation}
-To solve this system efficiently and minimize memory demands compared to direct solvers, iterative methods are utilized. The most fundamental approach explored is the Jacobi iteration, defined mathematically as:
+
+where $c(x,y,t)$ denotes the concentration and $D$ the diffusion coefficient. The domain is the unit square $0 \le x,y \le 1$, with fixed concentrations at the top and bottom boundaries and periodic boundary conditions in the $x$-direction. Using a standard five-point stencil, the equation is discretized with an explicit forward-time central-space scheme. Stability imposes the restriction
+\[
+\frac{4D \Delta t}{\Delta x^2} \le 1.
+\]
+
+When only the steady-state solution is of interest, the time-dependent problem reduces to the Laplace equation
+
 \begin{equation}
-c_{i,j}^{k+1}=\frac{1}{4}(c_{i+1,j}^{k}+c_{i-1,j}^{k}+c_{i,j+1}^{k}+c_{i,j-1}^{k})
-\label{eq:stensil5point}
+\nabla^2 c = 0.
 \end{equation}
-Unlike time dependent simulations, iterative methods require a global stopping condition to determine convergence. For this study, the solution is considered converged when the maximum change between iterations is smaller than a specified tolerance $\epsilon$:
-\begin{equation}
-\delta\equiv max_{i,j}|c_{i,j}^{k+1}-c_{i,j}^{k}|<\epsilon
-\label{stop}
-\end{equation}
-Implementing the Jacobi iteration requires separate matrices for $c_{i,j}^{k}$ and $c_{i,j}^{k+1}$ to prevent overwriting the necessary values. This foundational setup provides the necessary framework for exploring more advanced and faster-converging iterative algorithms, such as the Gauss-Seidel iteration and Successive Over Relaxation (SOR). Gauss-Seidel method provides marginal improvement over the Jacobi scheme by using updated values in each iteration, removing the need for separate matrices. SOR further generalises Gauss-Seidel by introducing a relaxation parameter $\omega$:
-\begin{equation}
-    c_{i,j}^{k+1}=\frac{\omega}{4}(c_{i+1,j}^{k}+c_{i-1,j}^{k}+c_{i,j+1}^{k}+c_{i,j-1}^{k}) + (1- \omega)c_{i,j}^{k}.
-\end{equation}
+
+Discretization yields a linear system where each grid value equals the average of its four neighbors. Rather than solving this system directly, iterative methods are employed. The Jacobi method updates all grid points using values from the previous iteration, while the Gauss–Seidel method uses newly computed values immediately, improving convergence. Successive Over-Relaxation (SOR) further accelerates convergence by introducing a relaxation parameter $\omega$. Iterations are terminated when the maximum update between successive iterations falls below a prescribed tolerance.
+
+Together, these problems illustrate fundamental techniques in scientific computing: explicit time integration of hyperbolic and parabolic PDEs, stability constraints for finite difference schemes, and iterative solution of large sparse linear systems.
 
 \section{Methodology}
 
-\subsection{Vibrating String}
-
-    In order to explore the behaviour of a vibrating string the one-dimensional wave equation is implemented using a second order accurate finite difference method.
-
-    The approximation of the 2nd derivative is derived by summing the Taylor expansions of $f(x+h)$ and $f(x-h)$ around x, and solving for the second derivative, as seen in \cref{eq:2nd_der}
-
-    \begin{align}
-    f^{(2)}(x) = \frac{f(x+h)-2f(x)+f(x-h)}{h^2} + \mathcal{O}(h^2)\label{eq:2nd_der}
-    \end{align}
-
-    Following this process for both the spatial and time derivatives of the wave equation, and writing the results in 
-    vector form, we get:
-
-    \begin{equation}
-        \vec{\psi}_{j}^{i+1} = 2\vec{\psi}_{j}^{n} - \vec{\psi}_{j}^{n-1} + (\frac{c\Delta t}{\Delta x})^2(\mathbf{A}\vec{\psi}^n + \vec{b}),
-    \end{equation} 
-
-    Applied on the interior points, $j = 2, \cdots, n-1$
-
-    Where \[ \mathbf{A} = \frac{1}{\Delta x^2}
-            \begin{bmatrix}
-            -2 & 1  & 0  & \cdots & 0 \\
-            1  & -2 & 1  & \ddots & \vdots \\
-            0  & 1  & -2 & \ddots & 0 \\
-            \vdots & \ddots & \ddots & \ddots & 1 \\
-            0 & \cdots & 0 & 1 & -2
-            \end{bmatrix}
-            \in \mathbb{R}^{(N-2)\times(N-2)}
-            \] and  \[
-                        \vec{b} =
-                        \frac{1}{\Delta x ^2}
-                        \begin{bmatrix}
-                        g_0 \\
-                        0 \\
-                        \vdots \\
-                        0 \\
-                        g_N
-                        \end{bmatrix}
-                        \in \mathbb{R}^{N-2}
-                        \]
-
-    where $N$ is the number of grid points, and $g_0$, and $g_N$, are the Dirichlet boundary conditions of the left and right boundary respectively.
-
-    For all simulations a timestep of $\Delta t = 0.01$, and wave velocity of $c=1$ is used. In order to ensure stability the CFL criterion, as seen in \cref{eq:wave_stability} requires that $\Delta x \geq c\Delta t$ 
-
-    \begin{equation}\label{eq:wave_stability}
-        c\frac{\Delta t}{\Delta x} \leq 1
-    \end{equation}
+    \subsection{Vibrating String}
+    
+        The one–dimensional wave equation
+        
+        is discretized using a second–order accurate central finite difference scheme in both space and time.
+        
+        The second derivative is obtained by summing the Taylor expansions of $f(x+h)$ and $f(x-h)$ about $x$, yielding
+        
+        \begin{align}
+        f''(x)=\frac{f(x+h) - 2f(x) + f(x-h)}{h^2}
+        +\mathcal{O}(h^2).
+        \label{eq:2nd_der}
+        \end{align}
+        
+        Applying this approximation to both temporal and spatial derivatives gives the explicit update scheme
+        
+        \begin{equation}
+        \psi_j^{n+1}
+        =
+        2\psi_j^n
+        -
+        \psi_j^{n-1}
+        +
+        \left(\frac{c\Delta t}{\Delta x}\right)^2
+        \left(
+        \psi_{j+1}^n
+        -
+        2\psi_j^n
+        +
+        \psi_{j-1}^n
+        \right),
+        \label{eq:wave_scheme}
+        \end{equation}
+        
+        The scheme may equivalently be written in matrix form using the discrete Laplacian operator. For fixed Dirichlet boundaries, $g_0=g_N=0$, the boundary contributions vanish.
+        
+        The method is explicit and conditionally stable. Stability requires that the Courant number
+        
+        \begin{equation}
+        \lambda
+        =
+        \frac{c\Delta t}{\Delta x}
+        \end{equation}
+        
+        satisfies the CFL condition
+        
+        \begin{equation}
+        \lambda \le 1.
+        \label{eq:wave_stability}
+        \end{equation}
+        
+        For all simulations, the wave speed is set to $c=1$ and the time step to $\Delta t = 0.001$. The spatial grid spacing is chosen such that the CFL condition is satisfied.
 
 
 
@@ -132,7 +137,11 @@ To investigate the two-dimensional time-dependent diffusion equation, a numerica
 
 The governing time-dependent diffusion equation is given by equation \ref{eq:finite_difference}
 
-The spatial domain was discretized into $N = 50$ intervals along both axes, yielding a uniform grid spacing of $\delta x = \delta y = 1/N$. Time was discretized into steps of $\delta t$. Applying a standard explicit finite difference approximation to Equation \ref{eq:finite_difference} yields the numerical update scheme as in equation \ref{eq:stensil5point}.
+The spatial domain was discretized into $N = 50$ intervals along both axes, yielding a uniform grid spacing of $\delta x = \delta y = 1/N$. Time was discretized into steps of $\delta t$. Applying a standard explicit finite difference approximation to Equation \ref{eq:finite_difference} yields the numerical update scheme as in equation:
+
+    \begin{equation}
+        c_{i,j}^{k+1}=c_{i,j}^{k}+\frac{\delta t D}{\delta x^{2}}(c_{i+1,j}^{k}+c_{i-1,j}^{k}+c_{i,j+1}^{k}+c_{i,j-1}^{k}-4c_{i,j}^{k})
+    \end{equation}
 
 To guarantee numerical stability for this explicit five-point stencil, the time step $\delta t$ must strictly satisfy the von Neumann stability condition:
 \begin{equation}
@@ -158,19 +167,19 @@ The Python implementation computed this analytical solution truncated to the fir
 
 
 \subsection{Iterative Schemes}
-The Jacobi, Gauss-Seidel and SOR schemes (see \ref{intro}) were implemented on a $N \times N$ grid with uniform spacing of $\delta x = \delta y = 1/N$.  Veritical and horizontal boundary conditions as described in section \ref{boundary_conditions} were used. The tolerance for a stopping condition (see equation \ref{stop}) was set to $10^{-5}$ across all experiments, and the iteration count $k$ was defined as the number of full traversals of the interior grid points required to reach that tolerance. 
+The Jacobi, Gauss-Seidel and SOR schemes (see \ref{intro}) were implemented on a $N \times N$ grid with uniform spacing of $\delta x = \delta y = 1/N$.  Veritical and horizontal boundary conditions as described in section previously were used. The tolerance for a stopping condition  was set to $10^{-5}$ across all experiments, and the iteration count $k$ was defined as the number of full traversals of the interior grid points required to reach that tolerance. 
 
-For validation, each scheme was compared against an analytical solution [eq here], and their respective MSEs were plotted point-wise. To further investigate the properties of each scheme, a convergence plot was also created. 
+For validation, each scheme was compared against the analytical solution, and their respective MSEs were plotted point-wise. To further investigate the properties of each scheme, a convergence plot was also created. 
 
 \subsubsection{Relaxation Parameter Dependence}
 The optimal relaxation parameter $\omega_{opt}$ was defined as minimising the value of $k$ needed for SOR convergence for a given problem.To determine the $\omega_{opt}$ an initial sweep was performed over $\omega \in [0.5, 2.5)$ with step size $\Delta \omega =0.05$. Subsequently, a more refined sweep ($\Delta=0.01$) was performed around the vicinity of the $\omega$ resulting in the minimal iteration count. 
 
 
+\subsubsection{Internal Objects in a Grid}
+Internal objects were encoded using a boolean mask over a computational grid. Two types of objects were considered: sinks and insulators. For sinks, grid points belonging to the object mask were set to zero at each iteration. Insulators were implemented by enforcing a Neumann boundary condition \[
+\frac{\partial c}{\partial n} = 0,
+\]  at the grid points encoding edges of the insulator, thus preventing flux from moving across it. 
 
-\subsection{Internal Objects in a Grid}
-Internal objects were encoded using a boolean mask over a computational grid. Two types of objects were considered: sinks and insulators. For sinks, grid points belonging to the object mask were set to zero at each iteration. Insulators were implemented by enforcing a Neumann boundary condition ($\frac{\partial T}{\partial n}$) to equal zero at the grid points encoding edges of the insulator. 
-
-\subsubsection{Influence on the SOR Scheme}
 In order to investigate the presence of objects on the SOR scheme, iteration counts were measured as a function of placement and size and final concentration fields were stored for comparison. 
 
 
@@ -178,30 +187,30 @@ In order to investigate the presence of objects on the SOR scheme, iteration cou
 
     \subsection{Vibrating string}
 
-        First, a grid convergence study is performed in order to determine a grid size that gives accurate results. This is done by varying the number of grid points logarithmically between 10 and 1000 - which is the maximum allowed based on the stability condition - and comparing the mean squared error of the solution after one period, for initial condition 3 as seen in \cref{tab:wave_init_cond}, to that with $N = 1000$. The results of the grid convergence study can be seen in \cref{fig:wave_grid_conv}. It can clearly pe observed that the error decreases with a smaller grid spacing, and converges to zero as the grid spacing approaches $\Delta x = 0.001$.
+        First, a grid convergence study is performed in order to determine a grid size that gives accurate results. This is done by varying the number of grid points logarithmically between 10 and 1000 - which is the maximum allowed based on the stability condition - and comparing the mean squared error of the solution at time $t = 1.1$, for initial condition 1 as seen in \cref{tab:wave_init_cond}, to the analytical solution $\psi(x,t) = sin(2\pi x)cos(2\pi t)$. The results of the grid convergence study can be seen in \cref{fig:wave_grid_conv}. The error decreases following a power-law with a slope of $2.26$. An exception to the power-law are the last few points where the error decreases more than the linear fit would suggest.
 
         \begin{figure}
             \centering
             \includegraphics[width=1\linewidth]{assignment_1/report/images/grid_convergence_errors.png}
-            \caption{Caption}
+            \caption{Log-log plot of the simulation error compared to the analytical solution for an analytical solution of $\psi(x, t=0) = \sin{(2\pi x)}$. A linear fit is also plotted with a slope of 2.26}
             \label{fig:wave_grid_conv}
         \end{figure}
 
-        Next, we explore the behaviour of the wave equation using three different initial conditions (see \cref{tab:wave_init_cond}). We run one simulation using each initial condition using a grid size of $N=1000$. We then plot a heat map of the strings amplitude over time (see \cref{fig:wave_heat}), as well as a few snapshots of the string at different parts of its period (see \cref{fig:wave_snapshots}). A simple standing wave can be observed for the first two initial conditions, where the string simply oscillates up and down with a frequency proportional to the number of peaks. More complex behaviour can be observed for the third initial condition: The initial peak splits into two peaks traveling in opposite directions, before they meet on the other side of the wave and recombine into one peak.
+        Next, we explore the behaviour of the wave equation using three different initial conditions (see \cref{tab:wave_init_cond}). We run one simulation using each initial condition using a grid size of $N=1000$. We then plot a heat map of the strings amplitude over time (see \cref{fig:wave_heat}). Videos of each of the waves can be found on the repository (refer to the readme) A simple standing wave can be observed for the first two initial conditions, where the string simply oscillates up and down with a frequency proportional to the number of peaks. More complex behaviour can be observed for the third initial condition: The initial peak splits into two peaks traveling in opposite directions, before they meet on the other side of the wave and recombine into one peak.
 
         \begin{figure}
             \centering
-            \includegraphics[width=0.9\linewidth]{assignment_1/report/images/wave_heat.png}
-            \caption{Caption}
+            \includegraphics[width=1\linewidth]{assignment_1/report/images/wave_heat.png}
+            \caption{Heat maps of the wave equation results for 3 different initial conditions. The x-axis is the position in the string, the y-axis is the time, and the colour is the strings amplitude at that position and time.}
             \label{fig:wave_heat}
         \end{figure}
         
-        \begin{figure}
-            \centering
-            \includegraphics[width=0.9\linewidth]{assignment_1/report/images/wave_snapshot.png}
-            \caption{Caption}
-            \label{fig:wave_snapshots}
-        \end{figure}
+        % \begin{figure}
+        %     \centering
+        %     \includegraphics[width=0.9\linewidth]{assignment_1/report/images/wave_snapshot.png}
+        %     \caption{Snapshots of the simulation results of the wave equation for three different initial conditions. For each initial condition six snapshots are plotted, evenly spaced from $t=0$ to $t=T/2$, where T is the wave's period.}
+        %     \label{fig:wave_snapshots}
+        % \end{figure}
 
         \begin{table}[]
             \centering
@@ -210,7 +219,7 @@ In order to investigate the presence of objects on the SOR scheme, iteration cou
                 number &  Initial condition \\\hline    
                  1     &  $\psi(x, t=0) = \sin{(2\pi x)}$ \\ 
                  2     &  $\psi(x, t=0) = \sin{(5\pi x)}$ \\
-                 3     &  $\psi(x, t=0) = \sin{(2\pi x)}$ if $1/5 \leq x \leq 2/5$ else $\psi = 0$
+                 3     &  $\psi(x, t=0) = \sin{(5\pi x)}$ if $1/5 \leq x \leq 2/5$ else $\psi = 0$
             \end{tabular}
             \label{tab:wave_init_cond}
         \end{table}
@@ -283,7 +292,8 @@ In order to investigate the presence of objects on the SOR scheme, iteration cou
         \begin{figure}
             \centering
             \includegraphics[width=1\linewidth]{convergence_compare.png}
-            \caption{Enter Caption}
+            \caption{A Log-Lin plot showing the convergence measure $\delta$ as a function of iteration count for Iterative Schemes. Three schemes are displayed: Jacobi, Gauss-Seidel, and SOR with $\omega \in {1.2, 1.5, 1.8, 1.9}$. 
+            Jacobi method converges the slowest, Gauss-Seidel places in the middle, while SOR exhibits the fastest convergence, scaling with the relaxation parameter.}
             \label{fig:conv}
         \end{figure}
 
@@ -293,65 +303,98 @@ In order to investigate the presence of objects on the SOR scheme, iteration cou
         \begin{figure}
             \centering
             \includegraphics[width=1\linewidth]{mse.png}
-            \caption{Enter Caption}
+            \caption{A point-wise MSE error between the analytical solution and the numerical steady-state solution for Jacobi, Gauss-Seidel, and SOR ($\omega = 1.8$) schemes. The error is minimal at the Dirichlet boundaries and reaches its maximum in the interior. SOR exhibits the lowest peak error, followed by Gauss--Seidel and Jacobi. }
             \label{fig:MSE}
         \end{figure}
 
 
     \subsection{Optimal Relaxation Parameter}
 
-        The dependence of the iteration count $k$ on the relaxation parameter $\omega$ was investigated for varied gird sizes.  Due to the time constraints, only $N = {20, 30, 50, 80, 100}$ were considered. For each $N$, $\omega_{opt}$ was found, as shown in Figure \ref{fig:opt_sor}.  Due to the discrete sampling of $\omega$ with resolution $\Delta \omega = 0.01$ in the refined search, the found $\omega_{opt}$ has an uncertainty of approximately $\pm 0.005$.
-        
+        The dependence of the iteration count $k$ on the relaxation parameter $\omega$ was investigated for varied gird sizes.  Due to the time constraints, only $N = {20, 30, 50, 80, 100}$ were considered. For each $N$, $\omega_{opt}$ was found, as shown in Figure \ref{fig:op}.  Due to the discrete sampling of $\omega$ with resolution $\Delta \omega = 0.01$ in the refined search, the found $\omega_{opt}$ has an uncertainty of approximately $\pm 0.005$.
         The values of $\omega_{opt}$ ranged between $1.80$ and $1.96$, staying with the theoretical bounds of $ 1< \omega <2 $.  Moreover, a monotonic increase of $w_{opt}$ with grid resolution was observed, where $\omega_{opt} \xrightarrow[]{}2^{-}$ as N increases. 
         
         
 
         \begin{figure}
             \centering
-            \includegraphics[width=0.5\linewidth]{opt_sor_fj.png}
-            \caption{Enter Caption}
-            \label{fig:placeholder}
+            \includegraphics[width=1\linewidth]{opt_sor_fj.png}
+            \caption{Optimal relaxation parameter $\omega_{\mathrm{opt}}$ as a function of grid size $N$. The optimal value increases monotonically with $N$ and approaches $2$ from below.}
+            \label{fig:op}
         \end{figure}
 
 
     \subsection{Influence of Internal Objects}
-
-    
-    The presence of internal objects significantly affected convergence behaviour of SOR. 
-
-    
-    All placement and area sweeps were performed on SOR ($\omega = 1.92$) and $N=50$. 
+   All experiments, placement, and area sweeps were performed on SOR ($\omega = 1.92$) and $N=50$, corresponding to the optimal relaxation parameter of the base domain.
+    \subsubsection{Sinks}
+     Figure \ref{fig:place} shows the iteration count required for convergence as a function of sink placement for a fixed square sink size of side length $L=6$. The highest iteration count occurs when the sink is placed near the top boundary, where the Dirichlet $c=1$ condition creates the strongest concentration gradient. Moving the sink towards the interior part of the grid generally reduces the required $k$. However, this is not purely monotonic, as a region of higher $k$ can be observed in the lower  portion of the domain, away from the vertical boundaries. 
+     Figure \ref{fig:are} shows the mean iteration count as a function of sink area, averaged over $50$ random placements for each size. A $95\%$ Confidence Interval is plotted as the error bar. For small and intermediate sink areas, the mean iteration count exhibits oscillatory behaviour and relatively wide confidence intervals. For larger areas (approximately $750$ to $1000$), a region where the iteration count becomes approximately constant can be seen. The confidence interval narrows significantly as well. Finally, for very large sink areas approaching the domain size, the iteration count decreases once more.
     
     
 \begin{figure}
     \centering
-    \includegraphics[width=0.5\linewidth]{place.png}
-    \caption{Enter Caption}
-    \label{fig:placeholder}
+    \includegraphics[width=1\linewidth]{place.png}
+    \caption{Iteration count required for convergence as a function of square sink placement on a $50\times50$ grid using SOR with $\omega=1.92$. Higher values indicate slower convergence. The spatial variation demonstrates that convergence speed depends on both proximity to the Dirichlet boundaries and interaction with global error modes}
+    \label{fig:place}
 \end{figure}
 
 
 \begin{figure}
     \centering
-    \includegraphics[width=0.5\linewidth]{area_fixed.png}
-    \caption{Enter Caption}
-    \label{fig:placeholder}
+    \includegraphics[width=1\linewidth]{area_fixed.png}
+    \caption{Mean iteration count as a function of square sink area, averaged over 50 random placements per size. Error bars indicate \$95\%\$ confidence intervals. The non-monotonic behaviour indicates that there is no simple relationship between area of sink and $N$.}
+    \label{fig:are}
 \end{figure}
 
     \subsubsection{Optimal Relaxation Parameter}
-    
+    To assess whether the presence of sinks influences the optimal relaxation parameter, sweeps were performed for several configurations of a $10 \times 10$ square sink. 
+    The results are shown in table \ref{tab:omega_sinks}. When a central square sink is introduced, the optimal relaxation parameter shifts slightly to $\omega_{\mathrm{opt}} = 1.88$, while the minimum iteration count decreases substantially to $k_{\min} = 94$. For sinks placed near the top and bottom boundaries, $\omega_{\mathrm{opt}}$ remains close to the base value, taking values of $1.89$ and $1.91$, respectively. Overall, the introduction of sinks produces only moderate shifts in the optimal relaxation parameter (on the order of $0.01$--$0.04$), while the impact on the required iteration count is considerably larger
 
-        
+    \begin{table}[H]
+\centering
+\caption{Optimal relaxation parameter for representative sink placements.}
+\label{tab:omega_sinks}
+\begin{tabular}{lcc}
+\toprule
+Configuration & $\omega_{\mathrm{opt}}$ & $k_{\min}$ \\
+\midrule
+No sink & 1.92 & 151 \\
+Square center (10×10) & 1.88 & 94 \\
+Square top (10×10) & 1.89 & 136 \\
+Square bottom (10×10) & 1.91 & 131 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+    
+        \subsubsection{Insulators}
+         To investigate the influence of insulating objects, a rectangular insulator was introduced into the domain. For a base domain, convergence was achieved in $k=151$. When a rectangular, wide spanning, insulator was placed at indices $i=10$--$20$ and $j=10$--$40$, the required iteration count increased to $k=201$. This represents an increase of approximately $33\%$ in convergence time. Moreover, the animation of the time evolution of the system showed that when an insulator is placed, the gradient cannot propagate smoothly downwards, but is blocked by the object in it's way, resulting in a slower convergence.  
+
+
 \section{Discussion}
 
+    \subsection{Vibrating string}
+        The grid convergence study performed confirms the expected accuracy of $\mathcal{O}(\Delta x^2)$. The slightly higher than expected slope can be attributed to the points for which $\Delta x \approx c \Delta t $, which have a lower error than the theoretical one. This occurs because the leading second order truncation term vanishes due to cancellation between the spatial and temporal descritization errors. It was observed than when the grid convergence study was performed for a time which is a multiple of the wave's period, the slope of the graph was close to 4, suggesting a complete cancellation of the second order truncation term when the solution is the same as the initial condition.
 
+        The results of the grid convergence study mean we can be quite confident about the results observed in \cref{fig:wave_heat}. The behaviour observed for the two first initial conditions is exactly what one would expect for a wave on a string with two closed ends with a number of antinodes equal to the wave number and a number of nodes one more than that of the antinodes. The behaviour observed for the third initial condition is more difficult to into it. However it is  quite characteristic of travelling waves on a string. 
 
+    \subsection{Time dependent wave equation}
+        The findings of this simulation demonstrate the robust capability of the explicit finite difference method to model the two-dimensional time-dependent diffusion equation. The excellent agreement between the numerical results and the exact analytical solution provides strong validation for the computational framework.
+
+        As observed in the temporal evolution of the concentration profile, the numerical model accurately captures the physical behavior of the diffusion process. The system transitions smoothly from an initial state of zero internal concentration to a steady-state linear gradient, satisfying the theoretical limit $\lim_{t\rightarrow\infty}c(y,t)=y$. The exceptionally low absolute error magnitudes (on the order of $10^{-4}$) at finite times confirm that the spatial resolution ($\delta x = 1/50$) and the dynamically scaled time step $\delta t$ sufficiently minimized truncation errors. Crucially, adhering strictly to the stability criterion $\frac{4\delta tD}{\delta x^{2}}\le1$ prevented the explicit scheme from diverging.
+        
+        Furthermore, the 2D spatial analysis verified the correct implementation of the system's boundary conditions. The horizontal uniformity of the concentration field confirms that the periodic boundary conditions applied along the $x$-axis effectively simulated an infinite lateral expanse without introducing artificial edge artifacts. 
+
+        
+    \subsection{Iterative Schemes}
+        While Jacobi, Gauss-Seidel, and SOR all converge to the same steady-state solution, their rates and errors differ significantly. 
+        Internal objects modify convergence behaviour in a significant way. Sinks reduce the number of effective degrees of freedom by effectively enforcing Dirichlet values on the interior points. As a result, certain sink placements and sizes reduce the $k$ needed to reach convergence. Sink positions near regions of strong concentration gradient introduce more contrast and require additional time to converge. The non-monotonic dependence of iteration count on sink area can also be then explained by that relationship: increasing area reduces unknowns, but the placement can make the calculations more complicated.
+        In contrast, insulating objects preserve unknowns but essentially alter the connectivity between grid points. By enforcing zero normal flux, insulators obstruct diffusion and partition or disturb the domain, which results in slower convergence.
+        This demonstrates that the convergence of iterative schemes is determined not only by the grid size and solver parameters but also by the structure of and within the domain.
+        
 \section{Conclusion}
+This report applied finite difference methods to three representative PDE problems: the one-dimensional wave equation, the two-dimensional time-dependent diffusion equation, and the steady-state Laplace equation. For the wave equation, the explicit second-order scheme produced stable solutions under the CFL condition and the grid study confirmed the expected $\mathcal{O}(\Delta x^2)$ accuracy. For diffusion, the explicit solution matched the analytical well at multiple times while satisfying the von Neumann stability constraint, and the solution approached the expected steady state $c(y)=y$ with correct periodic behaviour in $x$.
+For the Laplace problem, Jacobi, Gauss--Seidel, and SOR converged to the same steady-state solution but with substantially different efficiency.  Introducing internal objects showed that convergence depends strongly on domain structure.
 
-
-\appendix
-
-Extra components
 
 
 \end{document}
