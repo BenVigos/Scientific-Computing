@@ -1,16 +1,9 @@
 import numpy as np
-from src.iter_schemes import sor, sor_opt, sor_numba
+from src.iter_schemes import sor, sor_numba
 from tqdm import tqdm
 
 
-def select_stick_cell(probabilities):
-    flat_probabilities = probabilities.flatten()
-    if flat_probabilities.sum() == 0:
-        assert False, "No valid cells to stick to (all probabilities are zero). Check the concentration field and growth boundary."
-        return
-    selection = np.random.choice(len(flat_probabilities), p=flat_probabilities)
-    row, col = np.unravel_index(selection, probabilities.shape)
-    return row, col
+
 
 def dla_step(grid, diffusion_grid, debug=False, ita = 1):
     """Perform one step of diffusion-limited aggregation (DLA) on the grid.\n
@@ -24,7 +17,7 @@ def dla_step(grid, diffusion_grid, debug=False, ita = 1):
     :param ita: probability exponent
     """
     sink_mask = np.zeros((len(grid), len(grid)), dtype=np.bool_)
-    diffusion_grid, _, _  = sor_numba(len(grid),omega= 1.9, c=diffusion_grid, sink=sink_mask, insulator=grid, max_iter=10000, tol=1e-5)
+    diffusion_grid, _, _  = sor_numba(len(grid),omega= 1.9, c=diffusion_grid, sink=sink_mask, insulator=grid, max_iter=100000, tol=1e-5)
 
     #compute sticking probabilities at growth boundary
     neighbours = outer_neighbors(grid)
@@ -34,12 +27,53 @@ def dla_step(grid, diffusion_grid, debug=False, ita = 1):
         print("Neighbor concentrations at growth boundary:")
         print(neighbour_concentrations)
 
-    probabilities = compute_stick_prob(neighbour_concentrations, ita=ita)
+    probabilities = compute_stick_prob(neighbour_concentrations, neighbours, ita=ita)
     selection = select_stick_cell(probabilities)
-
+    if selection is None:
+        print("No valid cells to stick to. Skipping this step.")
+        return grid, diffusion_grid
     grid[selection] = 1
 
     return grid, diffusion_grid
+
+def select_stick_cell(probabilities):
+    flat_probabilities = probabilities.flatten()
+    if flat_probabilities.sum() == 0:
+        # assert False, "No valid cells to stick to (all probabilities are zero). Check the concentration field and growth boundary."
+        return None
+    selection = np.random.choice(len(flat_probabilities), p=flat_probabilities)
+    row, col = np.unravel_index(selection, probabilities.shape)
+    return row, col
+
+def compute_stick_prob(concentration_field, neighbours, ita = 1):
+    """Compute the sticking probability for a particle at position (x, y) based on neighboring occupied sites."""
+    neighbour_mask = neighbours.astype(bool)
+    concentration_field_exp = np.zeros_like(concentration_field)
+    concentration_field_exp[neighbour_mask] = np.power(concentration_field[neighbour_mask], ita)
+
+    concentration_sum = np.sum(concentration_field_exp)
+    prob = concentration_field_exp/concentration_sum if concentration_sum > 0 else np.zeros_like(concentration_field)
+    return prob
+
+def outer_neighbors(A):
+    """
+    Return a boolean matrix where True indicates cells that are adjacent to at least one occupied cell in A, but are not occupied themselves.
+
+    :param A: the input 2D array (boolean or integer) where non-zero/True values indicate occupied cells.
+    :return: matrix of the same shape as A where True indicates cells that are adjacent to at least one occupied cell in A, but are not occupied themselves.
+    """
+    A = A.astype(bool)
+
+    up    = np.pad(A[:-1, :], ((1,0),(0,0)))
+    down  = np.pad(A[1:,  :], ((0,1),(0,0)))
+    left  = np.pad(A[:, :-1], ((0,0),(1,0)))
+    right = np.pad(A[:, 1: ], ((0,0),(0,1)))
+
+    neighbor_has_one = up | down | left | right
+
+    B = neighbor_has_one & (~A)
+    return B.astype(int)
+
 
 def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 1000, stop_threshold: float = 0.5, debug: bool = False, ita: float = 1):
     """Run a DLA simulation on a grid of given size with a specified number of particles.\n
@@ -78,31 +112,9 @@ def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 1000,
             break
     return grid
 
-def compute_stick_prob(concentration_field, ita = 1):
-    """Compute the sticking probability for a particle at position (x, y) based on neighboring occupied sites."""
-    concentration_field_exp = np.power(concentration_field, ita)
-    concentration_sum = np.sum(concentration_field_exp)
-    prob = concentration_field_exp/concentration_sum if concentration_sum > 0 else np.zeros_like(concentration_field)
-    return prob
 
-def outer_neighbors(A):
-    """
-    Return a boolean matrix where True indicates cells that are adjacent to at least one occupied cell in A, but are not occupied themselves.
 
-    :param A: the input 2D array (boolean or integer) where non-zero/True values indicate occupied cells.
-    :return: matrix of the same shape as A where True indicates cells that are adjacent to at least one occupied cell in A, but are not occupied themselves.
-    """
-    A = A.astype(bool)
 
-    up    = np.pad(A[:-1, :], ((1,0),(0,0)))
-    down  = np.pad(A[1:,  :], ((0,1),(0,0)))
-    left  = np.pad(A[:, :-1], ((0,0),(1,0)))
-    right = np.pad(A[:, 1: ], ((0,0),(0,1)))
-
-    neighbor_has_one = up | down | left | right
-
-    B = neighbor_has_one & (~A)
-    return B.astype(int)
 
 
 

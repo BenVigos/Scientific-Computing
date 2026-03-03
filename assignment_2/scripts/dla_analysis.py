@@ -3,11 +3,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 if __name__ == '__main__':
-    grid_size = (100, 100)
-    steps = 2000
+    np.random.seed(42)
+    N = 100
+    grid_size = (N, N)
+    steps = 1000
     stop_threshold = 0.5
     debug = False
-    ita = 0.8
+    ita = 3
     # BUG: when ita is 0 the cluster is disconnected
     final_grid = dla(grid_size, steps, stop_threshold, debug, ita=ita)
 
