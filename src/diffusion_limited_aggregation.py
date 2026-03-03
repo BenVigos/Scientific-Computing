@@ -1,6 +1,7 @@
 import numpy as np
 from src.iter_schemes import sor, sor_numba
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 1000, stop_threshold: float = 0.5, debug: bool = False, ita: float = 1):
     """Run a DLA simulation on a grid of given size with a specified number of particles.\n
@@ -132,11 +133,13 @@ def outer_neighbors(A):
 
 
 if __name__ == '__main__':
-    grid_size = (5, 5)
-    steps = 3
+    grid_size = (200, 200)
+    steps = 10000
     stop_threshold = 0.5
-    debug = True
+    debug = False
+    ita = 0.5
 
-    final_grid = diffusion_limited_aggregation(grid_size, steps, stop_threshold, debug)
+    final_grid = diffusion_limited_aggregation(grid_size, steps, stop_threshold, debug, ita=ita)
     print("Final DLA cluster:")
-    print(final_grid)
+    plt.imshow(final_grid)
+    plt.show()
