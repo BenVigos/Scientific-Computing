@@ -15,6 +15,8 @@ import numpy as np
 import pandas as pd
 from math import sqrt
 from scipy import stats
+from scipy.ndimage import convolve
+from tqdm import tqdm
 
 # Import your DLA function; adjust path if necessary
 from src.diffusion_limited_aggregation import diffusion_limited_aggregation as dla
@@ -136,24 +138,18 @@ def skeleton_branch_stats(grid):
     if not SKIMAGE_AVAILABLE:
         return {"endpoints": np.nan, "branchpoints": np.nan, "skeleton_length": np.nan}
     occ = (grid > 0)
-    sk = skeletonize(occ)
-    sk_u8 = sk.astype(np.uint8)
-    # neighbor count on skeleton (8-neighbors)
-    kernel_coords = [(-1,-1),(-1,0),(-1,1),(0,-1),(0,1),(1,-1),(1,0),(1,1)]
-    neigh_count = np.zeros_like(sk_u8, dtype=np.int32)
-    rows, cols = sk_u8.shape
-    for dy, dx in kernel_coords:
-        shifted = np.zeros_like(sk_u8)
-        ys_src = max(0, -dy), rows - max(0, dy)
-        xs_src = max(0, -dx), cols - max(0, dx)
-        ys_dst = max(0, dy), rows - max(0, -dy)
-        xs_dst = max(0, dx), cols - max(0, -dx)
-        shifted[ys_dst[0]:ys_dst[1], xs_dst[0]:xs_dst[1]] = sk_u8[ys_src[0]:ys_src[1], xs_src[0]:xs_src[1]]
-        neigh_count += shifted
+    sk = skeletonize(occ).astype(np.uint8)
+    # neighbor count on skeleton (4-neighbors)
+    kernel = np.array([[0, 1, 0],
+                       [1, 0, 1],
+                       [0, 1, 0]])
+
+    neigh_count = convolve(sk, kernel, mode='constant', cval=0)
     endpoints = np.logical_and(sk, neigh_count == 1).sum()
     branchpoints = np.logical_and(sk, neigh_count > 2).sum()
     skeleton_length = sk.sum()
-    return {"endpoints": int(endpoints), "branchpoints": int(branchpoints), "skeleton_length": int(skeleton_length)}
+    branching_ratio = branchpoints / endpoints if endpoints > 0 else np.nan
+    return {"endpoints": int(endpoints), "branchpoints": int(branchpoints), "skeleton_length": int(skeleton_length), "branching_ratio": float(branching_ratio)}
 
 def bounding_box_metrics(grid):
     """
@@ -177,7 +173,8 @@ Compute bounding box metrics: max width (max horizontal span of occupied pixels)
 
 def run_experiments(ita_values, seeds_per_ita=20, grid_size=(100,100), steps=1000, out_csv="dla_metrics.csv", debug=False):
     results = []
-    for ita in ita_values:
+    for ita in tqdm(ita_values):
+        print(f"Running experiments for ita={ita:.2f}")
         for seed in range(seeds_per_ita):
             np.random.seed(seed)
             grid = dla(grid_size, steps, 0.1, debug, ita=ita)
@@ -209,7 +206,8 @@ def run_experiments(ita_values, seeds_per_ita=20, grid_size=(100,100), steps=100
                 "aspect_ratio": bounds["aspect_ratio"],
                 "endpoints": sk_stats["endpoints"],
                 "branchpoints": sk_stats["branchpoints"],
-                "skeleton_length": sk_stats["skeleton_length"]
+                "skeleton_length": sk_stats["skeleton_length"],
+                "branching_ratio": sk_stats["branching_ratio"]
             }
             results.append(row)
     df = pd.DataFrame(results)
@@ -219,15 +217,14 @@ def run_experiments(ita_values, seeds_per_ita=20, grid_size=(100,100), steps=100
 
 
 if __name__ == "__main__":
-    N = 20
+    N = 50
     out_dir = os.path.join(os.getcwd(), "..", "data", "dla")
     os.makedirs(out_dir, exist_ok=True)
-
-    occ = 0.2
+    n_runs = 20
     out_csv = os.path.join(out_dir, "dla_metrics.csv")
 
 
     ita_vals = np.linspace(0, 1.4, 7)
     print("Running DLA experiments")
-    df = run_experiments(ita_vals, seeds_per_ita=20, grid_size=(N,N), steps=1000, out_csv=out_csv, debug=False)
-    print(df.groupby("ita").agg({"D_est":["mean","std","count"], "R_g":["mean","std"], "occupancy":["mean","std"]}))
+    df = run_experiments(ita_vals, seeds_per_ita=n_runs, grid_size=(N,N), steps=1000, out_csv=out_csv, debug=False)
+    print(df.groupby("ita").agg({"D_est":["mean","std","count"], "R_g":["mean","std"], "aspect_ratio":["mean","std"], "branching_ratio":["mean","std"], "endpoints":["mean","std"]}))

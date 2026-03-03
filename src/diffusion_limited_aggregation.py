@@ -2,6 +2,7 @@ import numpy as np
 from src.iter_schemes import sor, sor_numba
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+from skimage.morphology import skeletonize
 
 def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 1000, stop_threshold: float = 0.5, debug: bool = False, ita: float = 1):
     """Run a DLA simulation on a grid of given size with a specified number of particles.\n
@@ -36,7 +37,7 @@ def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 1000,
         #check stopping condition
         occupied_percentage = np.mean(grid)
         if occupied_percentage >= stop_threshold:
-            print(f"Stopping simulation at step {i+1} due to reaching stop threshold ({occupied_percentage:.2%} occupied).")
+            # print(f"Stopping simulation at step {i+1} due to reaching stop threshold ({occupied_percentage:.2%} occupied).")
             break
     return grid
 
@@ -128,14 +129,19 @@ def outer_neighbors(A):
 
 
 if __name__ == '__main__':
-    N = 20
+    N = 100
     grid_size = (N, N)
     steps = 1000
     stop_threshold = 0.1
     debug = False
-    ita = 0
+    ita = 0.5
 
     final_grid = diffusion_limited_aggregation(grid_size, steps, stop_threshold, debug, ita=ita)
     print("Final DLA cluster:")
+    skel = skeletonize(final_grid > 0)
+    plt.imshow(skel)
+    plt.title(f"DLA Cluster Skeleton (ita={ita})")
+    plt.show()
     plt.imshow(final_grid)
+    plt.title(f"DLA Cluster (ita={ita})")
     plt.show()
