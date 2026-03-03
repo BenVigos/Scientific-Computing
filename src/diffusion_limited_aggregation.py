@@ -2,8 +2,42 @@ import numpy as np
 from src.iter_schemes import sor, sor_numba
 from tqdm import tqdm
 
+def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 1000, stop_threshold: float = 0.5, debug: bool = False, ita: float = 1):
+    """Run a DLA simulation on a grid of given size with a specified number of particles.\n
+    The process is as follows:\n
+    1. Initialize an empty grid and place a seed particle at the bottom of the computational domain.\n
+    2. For each step, perform a DLA step to grow the cluster.\n
+    3. Stop the simulation if the percentage of occupied cells in the grid exceeds the stop_threshold or if the specified number of steps is reached.
 
+    :param grid_size: tuple (nx, ny) specifying the size of the grid.
+    :param steps: number of particles to add to the cluster.
+    :param stop_threshold: threshold for stopping the simulation based on the percentage of occupied cells in the grid (between 0 and 1).
+    :param debug: boolean flag to print debug information during the simulation.
+    :param ita: probability exponent
+    :return: 2D numpy array representing the final state of the DLA cluster
+    """
+    #initialize grid
+    grid = np.zeros(grid_size, dtype=int)
+    diffusion_grid = np.zeros(grid_size, dtype=float)
+    diffusion_grid[0, :] = 1  # set top boundary to concentration 1
 
+    #place seed particle at the bottom center
+    seed_x = grid_size[1] // 2
+    seed_y = grid_size[0] - 1
+    grid[seed_y, seed_x] = 1
+
+    for i in range(steps):
+        if debug:
+            print(f"Step {i+1}/{steps} ...")
+
+        grid, diffusion_grid = dla_step(grid, diffusion_grid, debug=debug, ita = ita)
+
+        #check stopping condition
+        occupied_percentage = np.mean(grid)
+        if occupied_percentage >= stop_threshold:
+            print(f"Stopping simulation at step {i+1} due to reaching stop threshold ({occupied_percentage:.2%} occupied).")
+            break
+    return grid
 
 def dla_step(grid, diffusion_grid, debug=False, ita = 1):
     """Perform one step of diffusion-limited aggregation (DLA) on the grid.\n
@@ -16,7 +50,7 @@ def dla_step(grid, diffusion_grid, debug=False, ita = 1):
     :param debug: Boolean flag to enable debugging.
     :param ita: probability exponent
     """
-    sink_mask = np.zeros((len(grid), len(grid)), dtype=np.bool_)
+    sink_mask = np.zeros(grid.shape, dtype=np.bool_)
     diffusion_grid, _, _  = sor_numba(len(grid),omega= 1.9, c=diffusion_grid, sink=sink_mask, insulator=grid, max_iter=100000, tol=1e-5)
 
     #compute sticking probabilities at growth boundary
@@ -37,6 +71,12 @@ def dla_step(grid, diffusion_grid, debug=False, ita = 1):
     return grid, diffusion_grid
 
 def select_stick_cell(probabilities):
+    """
+    Randomly select a cell to stick to based on the given probabilities.
+
+    :param probabilities: 2D numpy array of probabilities for each cell at the growth boundary.
+    :return: tuple (row, col) of the selected cell, or None if no valid cells are available.
+    """
     flat_probabilities = probabilities.flatten()
     if flat_probabilities.sum() == 0:
         # assert False, "No valid cells to stick to (all probabilities are zero). Check the concentration field and growth boundary."
@@ -46,8 +86,15 @@ def select_stick_cell(probabilities):
     return row, col
 
 def compute_stick_prob(concentration_field, neighbours, ita = 1):
-    """Compute the sticking probability for a particle at position (x, y) based on neighboring occupied sites."""
-    neighbour_mask = neighbours.astype(bool)
+    """
+    Compute the sticking probability for each cell at the growth boundary based on the concentration field and the presence of neighbors.
+
+    :param concentration_field: 2D numpy array representing the concentration field at the growth boundary.
+    :param neighbours: 2D boolean numpy array indicating which cells are at the growth boundary (True for cells that are neighbors to the cluster).
+    :param ita: exponent for the sticking probability (default is 1, which corresponds to linear dependence on concentration). Higher values of ita will make the sticking probability more sensitive to concentration differences.
+    :return: 2D numpy array of sticking probabilities for each cell at the growth boundary, normalized to sum to 1.
+    """
+    neighbour_mask = neighbours
     concentration_field_exp = np.zeros_like(concentration_field)
     concentration_field_exp[neighbour_mask] = np.power(concentration_field[neighbour_mask], ita)
 
@@ -72,45 +119,10 @@ def outer_neighbors(A):
     neighbor_has_one = up | down | left | right
 
     B = neighbor_has_one & (~A)
-    return B.astype(int)
+    return B
 
 
-def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 1000, stop_threshold: float = 0.5, debug: bool = False, ita: float = 1):
-    """Run a DLA simulation on a grid of given size with a specified number of particles.\n
-    The process is as follows:\n
-    1. Initialize an empty grid and place a seed particle at the bottom of the computational domain.\n
-    2. For each step, perform a DLA step to grow the cluster.\n
-    3. Stop the simulation if the percentage of occupied cells in the grid exceeds the stop_threshold or if the specified number of steps is reached.
 
-    :param grid_size: tuple (nx, ny) specifying the size of the grid.
-    :param steps: number of particles to add to the cluster.
-    :param stop_threshold: threshold for stopping the simulation based on the percentage of occupied cells in the grid (between 0 and 1).
-    :param debug: boolean flag to print debug information during the simulation.
-    :param ita: probability exponent
-    :return: 2D numpy array representing the final state of the DLA cluster
-    """
-    #initialize grid
-    grid = np.zeros(grid_size, dtype=int)
-    diffusion_grid = np.zeros(grid_size, dtype=float)
-    diffusion_grid[0, :] = 1  # set top boundary to concentration 1
-
-    #place seed particle at the bottom center
-    seed_x = grid_size[0] // 2
-    seed_y = grid_size[1] - 1
-    grid[seed_y, seed_x] = 1
-
-    for i in range(steps):
-        if debug:
-            print(f"Step {i+1}/{steps} ...")
-
-        grid, diffusion_grid = dla_step(grid, diffusion_grid, debug=debug, ita = ita)
-
-        #check stopping condition
-        occupied_percentage = np.mean(grid)
-        if occupied_percentage >= stop_threshold:
-            print(f"Stopping simulation at step {i+1} due to reaching stop threshold ({occupied_percentage:.2%} occupied).")
-            break
-    return grid
 
 
 

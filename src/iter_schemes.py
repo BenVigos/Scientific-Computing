@@ -161,7 +161,7 @@ def sor(N, omega=1, tol=1e-5, max_iter=10000,
 
 
 @njit
-def sor_numba(N, omega, c, sink,insulator, max_iter = 100000, tol = 1e-3):
+def sor_numba(N, omega, c, sink,insulator, max_iter = 100000, tol = 1e-5):
     """
         Successive Over-Relaxation (SOR) method for solving the steady-state diffusion equation on a 2D grid with specified boundary conditions, sinks, and insulators. This version is optimized with Numba for performance.
     :param N: Grid size (NxN)
