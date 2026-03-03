@@ -1,5 +1,5 @@
 import numpy as np
-from src.iter_schemes import sor
+from src.iter_schemes import sor, sor_opt, sor_numba
 from tqdm import tqdm
 
 
@@ -23,7 +23,8 @@ def dla_step(grid, diffusion_grid, debug=False, ita = 1):
     :param debug: Boolean flag to enable debugging.
     :param ita: probability exponent
     """
-    diffusion_grid, _, _, _ = sor(len(grid),omega= 1.9, insulator=grid, init_grid=diffusion_grid)
+    sink_mask = np.zeros((len(grid), len(grid)), dtype=np.bool_)
+    diffusion_grid, _, _  = sor_numba(len(grid),omega= 1.9, c=diffusion_grid, sink=sink_mask, insulator=grid, max_iter=10000, tol=1e-5)
 
     #compute sticking probabilities at growth boundary
     neighbours = outer_neighbors(grid)
@@ -40,7 +41,7 @@ def dla_step(grid, diffusion_grid, debug=False, ita = 1):
 
     return grid, diffusion_grid
 
-def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 10000, stop_threshold: float = 0.5, debug: bool = False, ita: float = 1):
+def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 1000, stop_threshold: float = 0.5, debug: bool = False, ita: float = 1):
     """Run a DLA simulation on a grid of given size with a specified number of particles.\n
     The process is as follows:\n
     1. Initialize an empty grid and place a seed particle at the bottom of the computational domain.\n
@@ -64,7 +65,7 @@ def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 10000
     seed_y = grid_size[1] - 1
     grid[seed_y, seed_x] = 1
 
-    for i in tqdm(range(steps)):
+    for i in range(steps):
         if debug:
             print(f"Step {i+1}/{steps} ...")
 
@@ -102,6 +103,8 @@ def outer_neighbors(A):
 
     B = neighbor_has_one & (~A)
     return B.astype(int)
+
+
 
 
 if __name__ == '__main__':
