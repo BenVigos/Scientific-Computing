@@ -171,13 +171,12 @@ Compute bounding box metrics: max width (max horizontal span of occupied pixels)
     return {"max_width": width, "height": height_from_seed, "aspect_ratio": aspect}
 
 
-def run_experiments(ita_values, seeds_per_ita=20, grid_size=(100,100), steps=1000, out_csv="dla_metrics.csv", debug=False):
+def run_experiments(ita_values, seeds_per_ita=20, grid_size=(100,100), steps=1000, out_csv="dla_metrics.csv", debug=False, occupancy_threshold=0.1):
     results = []
     for ita in tqdm(ita_values):
-        print(f"Running experiments for ita={ita:.2f}")
         for seed in range(seeds_per_ita):
             np.random.seed(seed)
-            grid = dla(grid_size, steps, 0.1, debug, ita=ita)
+            grid = dla(grid_size, steps, occupancy_threshold, debug, ita=ita)
             # define seed center (bottom-center) as (x,y)
             seed_center = (grid.shape[1] // 2, grid.shape[0] - 1)
 
@@ -199,7 +198,6 @@ def run_experiments(ita_values, seeds_per_ita=20, grid_size=(100,100), steps=100
                 "R_g": rg,
                 "D_est": fractal_dim["D"],
                 "D_r": fractal_dim["r"],
-                "occupancy": occ,
                 "perimeter": perim,
                 "max_width": bounds["max_width"],
                 "height": bounds["height"],
@@ -217,14 +215,15 @@ def run_experiments(ita_values, seeds_per_ita=20, grid_size=(100,100), steps=100
 
 
 if __name__ == "__main__":
-    N = 50
+    N = 100
     out_dir = os.path.join(os.getcwd(), "..", "data", "dla")
     os.makedirs(out_dir, exist_ok=True)
-    n_runs = 20
+    n_runs = 25
+    occ_thres = 0.1
     out_csv = os.path.join(out_dir, "dla_metrics.csv")
 
 
-    ita_vals = np.linspace(0, 1.4, 7)
+    ita_vals = np.arange(0,2.2,0.2)
     print("Running DLA experiments")
-    df = run_experiments(ita_vals, seeds_per_ita=n_runs, grid_size=(N,N), steps=1000, out_csv=out_csv, debug=False)
+    df = run_experiments(ita_vals, seeds_per_ita=n_runs, grid_size=(N,N), steps=2000, out_csv=out_csv, debug=False, occupancy_threshold=occ_thres)
     print(df.groupby("ita").agg({"D_est":["mean","std","count"], "R_g":["mean","std"], "aspect_ratio":["mean","std"], "branching_ratio":["mean","std"], "endpoints":["mean","std"]}))
