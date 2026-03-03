@@ -128,12 +128,12 @@ def outer_neighbors(A):
 
 
 if __name__ == '__main__':
-    N = 100
+    N = 20
     grid_size = (N, N)
     steps = 1000
     stop_threshold = 0.1
     debug = False
-    ita = 3
+    ita = 0
 
     final_grid = diffusion_limited_aggregation(grid_size, steps, stop_threshold, debug, ita=ita)
     print("Final DLA cluster:")

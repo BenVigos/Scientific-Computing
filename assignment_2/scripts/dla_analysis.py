@@ -13,8 +13,7 @@ Functions:
 import os
 import numpy as np
 import pandas as pd
-from collections import defaultdict
-from math import sqrt, log
+from math import sqrt
 from scipy import stats
 
 # Import your DLA function; adjust path if necessary
@@ -29,21 +28,38 @@ except Exception:
 
 def box_counting_dimension(grid, box_sizes=None, fit_range=(0.1, 0.9)):
     """
-    Use box-counting method to estimate the fractal dimension of the occupied cluster in the grid. Counts how many boxes of size s are needed to cover the occupied pixels, and fits a line to log(count) vs log(1/s) to estimate D. The fit_range parameter specifies the relative box size range (as a fraction of the largest box) to use for fitting.
+    Use box-counting method to estimate the fractal dimension of the occupied cluster in the grid.
+    This version first crops the grid to the minimal bounding rectangle containing the cluster
+    (min/max in x and y) so the box-counting focuses on the cluster extents rather than empty
+    padding around it.
+
     :param grid: 2D numpy array representing the DLA cluster (1 for occupied, 0 for empty)
-    :param box_sizes: sizes of boxes to use for counting (if None, will use powers of 2 up to the largest box that fits in the grid)
-    :param fit_range: tuple (min_frac, max_frac) specifying the relative box size range (as a fraction of the largest box) to use for fitting the line to estimate D. For example, (0.1, 0.9) means only use box sizes that are between 10% and 90% of the largest box size for fitting. This can help focus on the scaling region and avoid very small or very large boxes that may not follow the power-law behavior well.
+    :param box_sizes: sizes of boxes to use for counting (if None, will use powers of 2 up to the largest box that fits in the cropped region)
+    :param fit_range: tuple (min_frac, max_frac) specifying the relative box size range (as a fraction of the largest box) to use for fitting the line to estimate D.
     :return: dict with keys "D" (estimated fractal dimension), "intercept" (y-intercept of the fit), and "r" (correlation coefficient of the fit)
     """
-    occ = (grid > 0).astype(np.uint8)
-    rows, cols = grid.shape
+    occ_full = (grid > 0).astype(np.uint8)
+
+    # find bounding box of occupied pixels
+    ys, xs = np.nonzero(occ_full)
+    if len(xs) == 0:
+        # empty cluster
+        return {"D": np.nan, "intercept": np.nan, "r": np.nan}
+
+    min_y, max_y = ys.min(), ys.max()
+    min_x, max_x = xs.min(), xs.max()
+
+    # crop to bounding box (inclusive)
+    occ = occ_full[min_y:max_y + 1, min_x:max_x + 1]
+    rows, cols = occ.shape
+
     max_box = min(rows, cols)
     if max_box <= 0:
         return {"D": np.nan, "intercept": np.nan, "r": np.nan}
 
     if box_sizes is None:
         max_pow = int(np.floor(np.log2(max_box)))
-        box_sizes = np.array([2**k for k in range(0, max_pow + 1)], dtype=int)
+        box_sizes = np.array([2 ** k for k in range(0, max_pow + 1)], dtype=int)
     else:
         box_sizes = np.array(box_sizes, dtype=int)
         box_sizes = box_sizes[(box_sizes >= 1) & (box_sizes <= max_box)]
@@ -54,6 +70,7 @@ def box_counting_dimension(grid, box_sizes=None, fit_range=(0.1, 0.9)):
     counts = []
     for s in box_sizes:
         cnt = 0
+        # tile over the cropped region
         for y in range(0, rows, s):
             for x in range(0, cols, s):
                 if occ[y:y + s, x:x + s].any():
@@ -163,7 +180,7 @@ def run_experiments(ita_values, seeds_per_ita=20, grid_size=(100,100), steps=100
     for ita in ita_values:
         for seed in range(seeds_per_ita):
             np.random.seed(seed)
-            grid = dla(grid_size, steps, 0.5, debug, ita=ita)
+            grid = dla(grid_size, steps, 0.1, debug, ita=ita)
             # define seed center (bottom-center) as (x,y)
             seed_center = (grid.shape[1] // 2, grid.shape[0] - 1)
 
@@ -206,6 +223,7 @@ if __name__ == "__main__":
     out_dir = os.path.join(os.getcwd(), "..", "data", "dla")
     os.makedirs(out_dir, exist_ok=True)
 
+    occ = 0.2
     out_csv = os.path.join(out_dir, "dla_metrics.csv")
 
 
