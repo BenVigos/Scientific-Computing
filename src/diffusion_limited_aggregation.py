@@ -111,24 +111,18 @@ def outer_neighbors(A):
     :param A: the input 2D array (boolean or integer) where non-zero/True values indicate occupied cells.
     :return: matrix of the same shape as A where True indicates cells that are adjacent to at least one occupied cell in A, but are not occupied themselves.
     """
+
     A = A.astype(bool)
 
     up    = np.pad(A[:-1, :], ((1,0),(0,0)))
     down  = np.pad(A[1:,  :], ((0,1),(0,0)))
-    left  = np.pad(A[:, :-1], ((0,0),(1,0)))
-    right = np.pad(A[:, 1: ], ((0,0),(0,1)))
+
+    left  = np.roll(A, shift=1, axis=1)
+    right = np.roll(A, shift=-1, axis=1)
 
     neighbor_has_one = up | down | left | right
-
     B = neighbor_has_one & (~A)
     return B
-
-
-
-
-
-
-
 
 
 
