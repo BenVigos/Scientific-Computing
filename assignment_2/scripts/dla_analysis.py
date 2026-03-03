@@ -27,7 +27,68 @@ try:
 except Exception:
     SKIMAGE_AVAILABLE = False
 
+def box_counting_dimension(grid, box_sizes=None, fit_range=(0.1, 0.9)):
+    """
+    Use box-counting method to estimate the fractal dimension of the occupied cluster in the grid. Counts how many boxes of size s are needed to cover the occupied pixels, and fits a line to log(count) vs log(1/s) to estimate D. The fit_range parameter specifies the relative box size range (as a fraction of the largest box) to use for fitting.
+    :param grid: 2D numpy array representing the DLA cluster (1 for occupied, 0 for empty)
+    :param box_sizes: sizes of boxes to use for counting (if None, will use powers of 2 up to the largest box that fits in the grid)
+    :param fit_range: tuple (min_frac, max_frac) specifying the relative box size range (as a fraction of the largest box) to use for fitting the line to estimate D. For example, (0.1, 0.9) means only use box sizes that are between 10% and 90% of the largest box size for fitting. This can help focus on the scaling region and avoid very small or very large boxes that may not follow the power-law behavior well.
+    :return: dict with keys "D" (estimated fractal dimension), "intercept" (y-intercept of the fit), and "r" (correlation coefficient of the fit)
+    """
+    occ = (grid > 0).astype(np.uint8)
+    rows, cols = grid.shape
+    max_box = min(rows, cols)
+    if max_box <= 0:
+        return {"D": np.nan, "intercept": np.nan, "r": np.nan}
+
+    if box_sizes is None:
+        max_pow = int(np.floor(np.log2(max_box)))
+        box_sizes = np.array([2**k for k in range(0, max_pow + 1)], dtype=int)
+    else:
+        box_sizes = np.array(box_sizes, dtype=int)
+        box_sizes = box_sizes[(box_sizes >= 1) & (box_sizes <= max_box)]
+
+    if box_sizes.size == 0:
+        return {"D": np.nan, "intercept": np.nan, "r": np.nan}
+
+    counts = []
+    for s in box_sizes:
+        cnt = 0
+        for y in range(0, rows, s):
+            for x in range(0, cols, s):
+                if occ[y:y + s, x:x + s].any():
+                    cnt += 1
+        counts.append(cnt)
+    counts = np.array(counts, dtype=float)
+
+    valid = counts > 0
+    if valid.sum() < 3:
+        return {"D": np.nan, "intercept": np.nan, "r": np.nan}
+
+    # select fit window based on relative box size (relative to largest box)
+    rel_size = box_sizes.astype(float) / box_sizes.max()
+    mask = valid & (rel_size >= fit_range[0]) & (rel_size <= fit_range[1])
+
+    # if too few points in requested window, fall back to all valid sizes
+    if mask.sum() < 3:
+        mask = valid
+        if mask.sum() < 3:
+            return {"D": np.nan, "intercept": np.nan, "r": np.nan}
+
+    x = -np.log(box_sizes[mask].astype(float))   # log(1/epsilon)
+    y = np.log(counts[mask])
+
+    slope, intercept, r_val, p_val, se = stats.linregress(x, y)
+    return {"D": float(slope), "intercept": float(intercept), "r": float(r_val)}
+
+
 def radius_of_gyration(grid, center=None):
+    """
+    Compute the radius of gyration of the occupied cluster in the grid. If center is not provided, use the mean position of occupied pixels as the center.
+    :param grid: 2D numpy array representing the DLA cluster (1 for occupied, 0 for empty)
+    :param center: tuple (cx, cy) specifying the center of mass; if None, it will be computed from the occupied pixels
+    :return: the radius of gyration (float)
+    """
     ys, xs = np.nonzero(grid)
     if len(xs) == 0:
         return 0.0
@@ -50,31 +111,6 @@ def perimeter_length(grid):
     neighbor_sum = up + down + left + right
     boundary = (occ == 1) & (neighbor_sum < 4)
     return int(boundary.sum())
-
-def radial_mass_scaling(grid, center=None, n_bins=30, fit_range=(0.1, 0.8)):
-    ys, xs = np.nonzero(grid)
-    if len(xs) == 0:
-        return {"D": np.nan, "intercept": np.nan, "r": np.nan}
-    if center is None:
-        cx = xs.mean()
-        cy = ys.mean()
-    else:
-        cx, cy = center
-    rs = np.sqrt((xs - cx)**2 + (ys - cy)**2)
-    r_max = rs.max()
-    if r_max <= 0:
-        return {"D": np.nan, "intercept": np.nan, "r": np.nan}
-    radii = np.linspace(1e-6, r_max, n_bins)
-    mass = np.array([np.sum(rs <= rr) for rr in radii])
-    # choose fitting window between fit_range fractions of r_max
-    mask = (radii >= fit_range[0]*r_max) & (radii <= fit_range[1]*r_max) & (mass > 0)
-    if mask.sum() < 3:
-        return {"D": np.nan, "intercept": np.nan, "r": np.nan}
-    logr = np.log(radii[mask])
-    logm = np.log(mass[mask])
-    slope, intercept, r_val, p_val, se = stats.linregress(logr, logm)
-    # slope is fractal dimension D
-    return {"D": float(slope), "intercept": float(intercept), "r": float(r_val)}
 
 def occupancy_fraction(grid):
     return float((grid > 0).sum()) / grid.size
@@ -102,28 +138,58 @@ def skeleton_branch_stats(grid):
     skeleton_length = sk.sum()
     return {"endpoints": int(endpoints), "branchpoints": int(branchpoints), "skeleton_length": int(skeleton_length)}
 
+def bounding_box_metrics(grid):
+    """
+Compute bounding box metrics: max width (max horizontal span of occupied pixels) and height (measured from bottom seed to topmost occupied pixel). Aspect ratio is width/height.
+    :param grid: 2D numpy array representing the DLA cluster (1 for occupied, 0 for empty)
+    :return: dict with keys "max_width", "height", "aspect_ratio"
+    """
+    ys, xs = np.nonzero(grid)
+    if len(xs) == 0:
+        return {"max_width": 0, "height": 0, "aspect_ratio": np.nan}
+    min_x, max_x = xs.min(), xs.max()
+    # width in pixels
+    width = int(max_x - min_x + 1)
+    # height measured from bottom seed (y = rows-1) to topmost occupied pixel
+    rows = grid.shape[0]
+    top_y = int(ys.min())
+    height_from_seed = int((rows - 1) - top_y + 1)
+    aspect = float(width) / float(height_from_seed) if height_from_seed > 0 else np.nan
+    return {"max_width": width, "height": height_from_seed, "aspect_ratio": aspect}
+
+
 def run_experiments(ita_values, seeds_per_ita=20, grid_size=(100,100), steps=1000, out_csv="dla_metrics.csv", debug=False):
     results = []
     for ita in ita_values:
         for seed in range(seeds_per_ita):
             np.random.seed(seed)
             grid = dla(grid_size, steps, 0.5, debug, ita=ita)
-            # assume seed is bottom-center; use center approx:
-            center = (grid.shape[1]//2, grid.shape[0]-1)  # (x,y) if needed for other metrics
-            # compute metrics
-            rg = radius_of_gyration(grid, center=None)
-            mass_scaling = radial_mass_scaling(grid, center=None, n_bins=40, fit_range=(0.15, 0.75))
+            # define seed center (bottom-center) as (x,y)
+            seed_center = (grid.shape[1] // 2, grid.shape[0] - 1)
+
+            # radius of gyration and radial mass scaling using the seed center
+            rg = radius_of_gyration(grid, center=seed_center)
+            fractal_dim = box_counting_dimension(grid)
+
+            # bounding / aspect metrics (max width and height measured from seed)
+            bounds = bounding_box_metrics(grid)
+
+            # occupancy, perimeter, skeleton-based topology
             occ = occupancy_fraction(grid)
             perim = perimeter_length(grid)
             sk_stats = skeleton_branch_stats(grid)
+
             row = {
                 "ita": ita,
                 "seed": seed,
                 "R_g": rg,
-                "D_est": mass_scaling["D"],
-                "D_r": mass_scaling["r"],
+                "D_est": fractal_dim["D"],
+                "D_r": fractal_dim["r"],
                 "occupancy": occ,
                 "perimeter": perim,
+                "max_width": bounds["max_width"],
+                "height": bounds["height"],
+                "aspect_ratio": bounds["aspect_ratio"],
                 "endpoints": sk_stats["endpoints"],
                 "branchpoints": sk_stats["branchpoints"],
                 "skeleton_length": sk_stats["skeleton_length"]
@@ -134,15 +200,16 @@ def run_experiments(ita_values, seeds_per_ita=20, grid_size=(100,100), steps=100
     print("Saved CSV to:", os.path.abspath(out_csv))
     return df
 
+
 if __name__ == "__main__":
-    N = 10
+    N = 20
     out_dir = os.path.join(os.getcwd(), "..", "data", "dla")
     os.makedirs(out_dir, exist_ok=True)
 
     out_csv = os.path.join(out_dir, "dla_metrics.csv")
 
 
-    ita_vals = [0.0, 0.5, 1.0, 2.0, 3.0, 5.0]
+    ita_vals = np.linspace(0, 1.4, 7)
     print("Running DLA experiments")
     df = run_experiments(ita_vals, seeds_per_ita=20, grid_size=(N,N), steps=1000, out_csv=out_csv, debug=False)
     print(df.groupby("ita").agg({"D_est":["mean","std","count"], "R_g":["mean","std"], "occupancy":["mean","std"]}))

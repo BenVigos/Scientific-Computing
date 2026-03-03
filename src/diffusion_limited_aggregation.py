@@ -51,8 +51,8 @@ def dla_step(grid, diffusion_grid, debug=False, ita = 1):
     :param debug: Boolean flag to enable debugging.
     :param ita: probability exponent
     """
-    sink_mask = np.zeros(grid.shape, dtype=np.bool_)
-    diffusion_grid, _, _  = sor_numba(len(grid),omega= 1.9, c=diffusion_grid, sink=sink_mask, insulator=grid, max_iter=100000, tol=1e-5)
+    insulator_mask = np.zeros(grid.shape, dtype=np.bool_)
+    diffusion_grid, _, _  = sor_numba(len(grid),omega= 1.9, c=diffusion_grid, sink=grid, insulator=insulator_mask, max_iter=100000, tol=1e-5)
 
     #compute sticking probabilities at growth boundary
     neighbours = outer_neighbors(grid)
@@ -96,8 +96,9 @@ def compute_stick_prob(concentration_field, neighbours, ita = 1):
     :return: 2D numpy array of sticking probabilities for each cell at the growth boundary, normalized to sum to 1.
     """
     neighbour_mask = neighbours
+    concentration_clip = np.clip(concentration_field, a_min=0, a_max=None)  # ensure non-negative concentrations
     concentration_field_exp = np.zeros_like(concentration_field)
-    concentration_field_exp[neighbour_mask] = np.power(concentration_field[neighbour_mask], ita)
+    concentration_field_exp[neighbour_mask] = np.power(concentration_clip[neighbour_mask], ita)
 
     concentration_sum = np.sum(concentration_field_exp)
     prob = concentration_field_exp/concentration_sum if concentration_sum > 0 else np.zeros_like(concentration_field)
@@ -133,11 +134,12 @@ def outer_neighbors(A):
 
 
 if __name__ == '__main__':
-    grid_size = (200, 200)
-    steps = 10000
-    stop_threshold = 0.5
+    N = 100
+    grid_size = (N, N)
+    steps = 1000
+    stop_threshold = 0.1
     debug = False
-    ita = 0.5
+    ita = 3
 
     final_grid = diffusion_limited_aggregation(grid_size, steps, stop_threshold, debug, ita=ita)
     print("Final DLA cluster:")
