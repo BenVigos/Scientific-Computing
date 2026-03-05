@@ -18,7 +18,7 @@ from src.mc import simulate_dla_mc_numba
 #     return grid
 
 
-def simulate_mc_dla(*, N, target_occupancy, ps, seed, max_steps_per_walker, top_boundary_percentage_stop=0.9):
+def simulate_mc_dla(*, N, target_occupancy, ps, seed, max_steps_per_walker, top_boundary_percentage_stop=0.99):
     """
     MC-DLA adapter.
     Returns grid as uint8 with convention y=0 bottom
