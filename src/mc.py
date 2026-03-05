@@ -91,8 +91,8 @@ def simulate_dla_mc_numba(
                 if ps >= 1.0 or np.random.random() < ps:
                     cluster[y, x] = True
                     occupied += 1
-                   
-                   # update top row count + stopping condition
+                    
+                    # update top row count + stopping condition
                     if top_stop and y == N - 1:
                         top_count += 1
                         if (top_count / N) >= top_boundary_percentage_stop:
