@@ -1,5 +1,6 @@
-from .grid import make_grid, empty_sink, empty_insulator
+from src.grid import make_grid, empty_sink, empty_insulator
 import numpy as np
+from numba import njit
 
 
 # make prints toggable later ig 
@@ -68,63 +69,141 @@ def gauss_seidel(N, tol=1e-5, max_iter=10000):
 
     return c, deltas
 
+def sor(N, omega=1, tol=1e-5, max_iter=10000,
+        sink=None, insulator=None,
+        ret_hist=False, init_grid=None):
+    """
+    Successive Over-Relaxation (SOR) method for solving the steady-state diffusion equation on a 2D grid with specified boundary conditions, sinks, and insulators.
 
-def sor(N, omega, tol=1e-5, max_iter=10000, sink=None, insulator=None, ret_hist=False):
-    c = make_grid(N)
+    :param N: Grid size (NxN)
+    :param omega: Relaxation factor (ω=1 corresponds to Gauss-Seidel, ω>1 is over-relaxation)
+    :param tol: convergence tolerance for the maximum change in concentration between iterations
+    :param max_iter: maximum number of iterations to perform
+    :param sink: mask (boolean 2D array) indicating locations of sinks where concentration is fixed to zero
+    :param insulator: mask (boolean 2D array) indicating locations of insulators where concentration does not change (no flux)
+    :param ret_hist: return history of concentration fields at each iteration (for visualization) if True
+    :param init_grid: optional initial concentration grid (if None, starts with default boundary conditions)
+    :return: concentration field after convergence, list of deltas for each iteration, (optionally) history of concentration fields, number of iterations taken, and whether convergence was achieved
+    """
+    if init_grid is not None:
+        c = init_grid.copy()
+    else:
+        c = make_grid(N)
 
     if sink is None:
         sink = empty_sink(N)
 
     if insulator is None:
         insulator = empty_insulator(N)
-    
+
     c[sink] = 0.0
 
     deltas = []
     history = []
-
     converged = False
+
+    # --- Precompute periodic neighbors (avoid modulo in loop)
+    j_plus = [(j + 1) % N for j in range(N)]
+    j_minus = [(j - 1) % N for j in range(N)]
+
+    # --- Local variable binding (faster lookups)
+    c_local = c
+    sink_local = sink
+    ins_local = insulator
+
     for k in range(max_iter):
 
-        c_old = c.copy()
+        max_delta = 0.0  # compute convergence inline
 
         for i in range(1, N-1):
             for j in range(N):
 
-                if sink[i, j]:
-                    c[i, j] = 0.0
+                if sink_local[i, j]:
+                    c_local[i, j] = 0.0
                     continue
 
-                if insulator[i, j]:
+                if ins_local[i, j]:
                     continue
 
-                jp = (j + 1) % N
-                jm = (j - 1) % N
+                jp = j_plus[j]
+                jm = j_minus[j]
 
-                cij = c[i, j]
+                cij = c_local[i, j]
 
-                right = cij if insulator[i, jp] else c[i, jp]
-                left = cij if insulator[i, jm] else c[i, jm]
-                top = cij if insulator[i+1, j] else c[i+1, j]
-                bottom = cij if insulator[i-1, j] else c[i-1, j]
+                right = cij if ins_local[i, jp] else c_local[i, jp]
+                left  = cij if ins_local[i, jm] else c_local[i, jm]
+                top   = cij if ins_local[i+1, j] else c_local[i+1, j]
+                bottom= cij if ins_local[i-1, j] else c_local[i-1, j]
 
                 gs_value = 0.25 * (right + left + top + bottom)
+                new_val = omega * gs_value + (1 - omega) * cij
 
-                c[i, j] = omega * gs_value + (1 - omega) * c[i, j]
+                diff = abs(new_val - cij)
+                if diff > max_delta:
+                    max_delta = diff
 
-        delta = convergence_check(c, c_old)
-        deltas.append(delta)
+                c_local[i, j] = new_val
+
+        deltas.append(max_delta)
 
         if ret_hist:
-            history.append(c.copy())
+            history.append(c_local.copy())
 
-        if delta < tol:
-            # print(f"SOR (ω={omega}) scheme converged in {k+1} iterations")
+        if max_delta < tol:
             converged = True
             break
 
-    
     if ret_hist:
-        return c, deltas, history, k+1, converged
+        return c_local, deltas, history, k+1, converged
+    else:
+        return c_local, deltas, k+1, converged
 
-    return c, deltas, k+1, converged
+
+
+@njit
+def sor_numba(N, omega, c, sink,insulator, max_iter = 100000, tol = 1e-5):
+    """
+        Successive Over-Relaxation (SOR) method for solving the steady-state diffusion equation on a 2D grid with specified boundary conditions, sinks, and insulators. This version is optimized with Numba for performance.
+    :param N: Grid size (NxN)
+    :param omega: Relaxation factor (ω=1 corresponds to Gauss-Seidel, ω>1 is over-relaxation)
+    :param c: initial concentration grid (2D numpy array)
+    :param sink: mask (boolean 2D array) indicating locations of sinks where concentration is fixed to zero
+    :param insulator: mask (boolean 2D array) indicating locations of insulators where concentration does not change (no flux)
+    :param max_iter: maximum number of iterations to perform
+    :param tol: convergence tolerance for the maximum change in concentration between iterations
+    :return:
+    """
+    j_plus = np.empty(N, dtype=np.int64)
+    j_minus = np.empty(N, dtype=np.int64)
+    for j in range(N):
+        j_plus[j] = (j + 1) % N
+        j_minus[j] = (j - 1) % N
+
+    for k in range(max_iter):
+        max_delta = 0.0
+        for i in range(1, N-1):
+            for j in range(N):
+                if sink[i, j]:
+                    c[i, j] = 0.0
+                    continue
+                if insulator[i, j]:
+                    continue
+
+                jp = j_plus[j]
+                jm = j_minus[j]
+                cij = c[i, j]
+
+                right = cij if insulator[i, jp] else c[i, jp]
+                left  = cij if insulator[i, jm] else c[i, jm]
+                top   = cij if insulator[i+1, j] else c[i+1, j]
+                bottom= cij if insulator[i-1, j] else c[i-1, j]
+
+                new_val = omega * 0.25 * (right + left + top + bottom) + (1 - omega) * cij
+                diff = abs(new_val - cij)
+                if diff > max_delta:
+                    max_delta = diff
+                c[i, j] = new_val
+
+        if max_delta < tol:
+            return c, k+1, True
+    return c, max_iter, False
