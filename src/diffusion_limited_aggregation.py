@@ -134,7 +134,7 @@ if __name__ == '__main__':
     steps = 1000
     stop_threshold = 0.1
     debug = False
-    ita = 2
+    ita = 0
 
     final_grid = diffusion_limited_aggregation(grid_size, steps, stop_threshold, debug, ita=ita)
     print("Final DLA cluster:")
