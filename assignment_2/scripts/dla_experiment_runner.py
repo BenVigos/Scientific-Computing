@@ -5,7 +5,7 @@ from tqdm import tqdm
 sys.path.insert(0, os.path.abspath("../.."))
 
 from src import dla_metrics as M
-from src.dla_adapters import simulate_mc_dla
+from src.dla_adapters import simulate_mc_dla, simulate_pde_dla
 
 
 def compute_metrics(grid, *, seed_center_xy):

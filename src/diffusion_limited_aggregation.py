@@ -4,7 +4,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 from skimage.morphology import skeletonize
 
-def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 1000, stop_threshold: float = 0.5, debug: bool = False, ita: float = 1):
+def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 1000, stop_threshold: float = 0.5, debug: bool = False, ita: float = 1, omega: float = 1.9):
     """Run a DLA simulation on a grid of given size with a specified number of particles.\n
     The process is as follows:\n
     1. Initialize an empty grid and place a seed particle at the bottom of the computational domain.\n
@@ -32,7 +32,7 @@ def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 1000,
         if debug:
             print(f"Step {i+1}/{steps} ...")
 
-        grid, diffusion_grid = dla_step(grid, diffusion_grid, debug=debug, ita = ita)
+        grid, diffusion_grid = dla_step(grid, diffusion_grid, debug=debug, ita = ita, omega = omega)
 
         #check stopping condition
         occupied_percentage = np.mean(grid)
@@ -41,7 +41,7 @@ def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 1000,
             break
     return grid
 
-def dla_step(grid, diffusion_grid, debug=False, ita = 1):
+def dla_step(grid, diffusion_grid, debug=False, ita = 1, omega = 1.9):
     """Perform one step of diffusion-limited aggregation (DLA) on the grid.\n
     One step consists of:\n
     1. Solve the time-independent diffusion equation (Laplace's equation) to get the concentration field.\n
@@ -53,7 +53,17 @@ def dla_step(grid, diffusion_grid, debug=False, ita = 1):
     :param ita: probability exponent
     """
     insulator_mask = np.zeros(grid.shape, dtype=np.bool_)
-    diffusion_grid, _, _  = sor_numba(len(grid),omega= 1.9, c=diffusion_grid, sink=grid, insulator=insulator_mask, max_iter=100000, tol=1e-5)
+    diffusion_grid, _, _ = sor_numba(
+        len(grid),
+        omega=omega,
+        c=diffusion_grid,
+        sink=grid,
+        insulator=insulator_mask,
+        max_iter=100000,
+        tol=1e-5
+    )
+    
+  
 
     #compute sticking probabilities at growth boundary
     neighbours = outer_neighbors(grid)
