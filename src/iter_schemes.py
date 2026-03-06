@@ -1,6 +1,6 @@
 from src.grid import make_grid, empty_sink, empty_insulator
 import numpy as np
-from numba import njit
+from numba import njit, prange
 
 
 # make prints toggable later ig 
@@ -179,14 +179,19 @@ def sor_numba(N, omega, c, sink,insulator, max_iter = 100000, tol = 1e-5):
         j_plus[j] = (j + 1) % N
         j_minus[j] = (j - 1) % N
 
+
+
+    mask_numeric = 1.0 - sink.astype(np.float64)
+
+    c *= mask_numeric
+
+
+
     for k in range(max_iter):
         max_delta = 0.0
         for i in range(1, N-1):
             for j in range(N):
-                if sink[i, j]:
-                    c[i, j] = 0.0
-                    continue
-                if insulator[i, j]:
+                if insulator[i, j] or sink[i, j]:
                     continue
 
                 jp = j_plus[j]
@@ -206,4 +211,110 @@ def sor_numba(N, omega, c, sink,insulator, max_iter = 100000, tol = 1e-5):
 
         if max_delta < tol:
             return c, k+1, True
+    return c, max_iter, False
+
+
+@njit(parallel=True)
+def sor_numba_redblack(N, omega, c, sink, insulator, max_iter=100000, tol=1e-5):
+    """
+    Parallel Red-Black Successive Over-Relaxation (SOR) solver for 2D diffusion.
+    """
+
+    j_plus = np.empty(N, dtype=np.int64)
+    j_minus = np.empty(N, dtype=np.int64)
+
+    for j in range(N):
+        j_plus[j] = (j + 1) % N
+        j_minus[j] = (j - 1) % N
+
+    mask_numeric = 1.0 - sink.astype(np.float64)
+
+    c *= mask_numeric
+
+    for k in range(max_iter):
+
+        max_delta = 0.0
+
+        # --------------------
+        # RED UPDATE
+        # --------------------
+        row_deltas = np.zeros(N)
+        for i in prange(1, N-1):
+            local_max = 0.0
+            for j in range(N):
+
+                if (i + j) % 2 != 0:
+                    continue
+
+                if insulator[i, j] or sink[i, j]:
+                    continue
+
+                jp = j_plus[j]
+                jm = j_minus[j]
+
+                cij = c[i, j]
+
+                right  = cij if insulator[i, jp] else c[i, jp]
+                left   = cij if insulator[i, jm] else c[i, jm]
+                top    = cij if insulator[i+1, j] else c[i+1, j]
+                bottom = cij if insulator[i-1, j] else c[i-1, j]
+
+                new_val = omega * 0.25 * (right + left + top + bottom) + (1 - omega) * cij
+
+                diff = abs(new_val - cij)
+                if diff > local_max:
+                    local_max = diff
+
+                c[i, j] = new_val
+
+            row_deltas[i] = local_max
+
+        red_delta = np.max(row_deltas)
+
+
+        # --------------------
+        # BLACK UPDATE
+        # --------------------
+        row_deltas[:] = 0.0
+        for i in prange(1, N-1):
+            local_max = 0.0
+            for j in range(N):
+
+                if (i + j) % 2 != 1:
+                    continue
+
+                if insulator[i, j] or sink[i, j]:
+                    continue
+
+                jp = j_plus[j]
+                jm = j_minus[j]
+
+                cij = c[i, j]
+
+                right  = cij if insulator[i, jp] else c[i, jp]
+                left   = cij if insulator[i, jm] else c[i, jm]
+                top    = cij if insulator[i+1, j] else c[i+1, j]
+                bottom = cij if insulator[i-1, j] else c[i-1, j]
+
+                new_val = omega * 0.25 * (right + left + top + bottom) + (1 - omega) * cij
+
+                diff = abs(new_val - cij)
+                if diff > local_max:
+                    local_max = diff
+
+                c[i, j] = new_val
+
+            row_deltas[i] = local_max
+
+        black_delta = np.max(row_deltas)
+
+        if red_delta > black_delta:
+            max_delta = red_delta
+        else:
+            max_delta = black_delta
+
+
+        if max_delta < tol:
+            return c, k + 1, True
+
     return c, max_iter, False

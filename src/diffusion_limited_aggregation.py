@@ -1,10 +1,10 @@
 import numpy as np
-from src.iter_schemes import sor, sor_numba
+from src.iter_schemes import sor_numba, sor_numba_redblack
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from skimage.morphology import skeletonize
 
-def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 1000, stop_threshold: float = 0.5, debug: bool = False, ita: float = 1):
+def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 1000, stop_threshold: float = 0.5, debug: bool = False, ita: float = 1, parallel: bool = False):
     """Run a DLA simulation on a grid of given size with a specified number of particles.\n
     The process is as follows:\n
     1. Initialize an empty grid and place a seed particle at the bottom of the computational domain.\n
@@ -32,16 +32,16 @@ def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 1000,
         if debug:
             print(f"Step {i+1}/{steps} ...")
 
-        grid, diffusion_grid = dla_step(grid, diffusion_grid, debug=debug, ita = ita)
+        grid, diffusion_grid, keep_running = dla_step(grid, diffusion_grid, debug=debug, ita = ita, parallel = parallel)
 
         #check stopping condition
         occupied_percentage = np.mean(grid)
-        if occupied_percentage >= stop_threshold:
+        if occupied_percentage >= stop_threshold or not keep_running:
             # print(f"Stopping simulation at step {i+1} due to reaching stop threshold ({occupied_percentage:.2%} occupied).")
             break
     return grid
 
-def dla_step(grid, diffusion_grid, debug=False, ita = 1):
+def dla_step(grid, prev_diffusion_grid, debug=False, ita = 1, parallel=False):
     """Perform one step of diffusion-limited aggregation (DLA) on the grid.\n
     One step consists of:\n
     1. Solve the time-independent diffusion equation (Laplace's equation) to get the concentration field.\n
@@ -53,7 +53,10 @@ def dla_step(grid, diffusion_grid, debug=False, ita = 1):
     :param ita: probability exponent
     """
     insulator_mask = np.zeros(grid.shape, dtype=np.bool_)
-    diffusion_grid, _, _  = sor_numba(len(grid),omega= 1.9, c=diffusion_grid, sink=grid, insulator=insulator_mask, max_iter=100000, tol=1e-5)
+    if parallel:
+        diffusion_grid, _, _  = sor_numba_redblack(len(grid),omega= 1.9, c=prev_diffusion_grid, sink=grid, insulator=insulator_mask, max_iter=100000, tol=1e-5)
+    else:
+        diffusion_grid, _, _  = sor_numba(len(grid),omega= 1.9, c=prev_diffusion_grid, sink=grid, insulator=insulator_mask, max_iter=100000, tol=1e-5)
 
     #compute sticking probabilities at growth boundary
     neighbours = outer_neighbors(grid)
@@ -66,11 +69,11 @@ def dla_step(grid, diffusion_grid, debug=False, ita = 1):
     probabilities = compute_stick_prob(neighbour_concentrations, neighbours, ita=ita)
     selection = select_stick_cell(probabilities)
     if selection is None:
-        print("No valid cells to stick to. Skipping this step.")
-        return grid, diffusion_grid
+        print("No valid cells to stick to. Ending simulation.")
+        return grid, diffusion_grid, False # return False to indicate simulation should end
     grid[selection] = 1
 
-    return grid, diffusion_grid
+    return grid, diffusion_grid, True
 
 def select_stick_cell(probabilities):
     """
@@ -87,7 +90,7 @@ def select_stick_cell(probabilities):
     row, col = np.unravel_index(selection, probabilities.shape)
     return row, col
 
-def compute_stick_prob(concentration_field, neighbours, ita = 1):
+def compute_stick_prob(concentration_field, neighbours, ita = 1, eps = 1e-6):
     """
     Compute the sticking probability for each cell at the growth boundary based on the concentration field and the presence of neighbors.
 
@@ -97,7 +100,7 @@ def compute_stick_prob(concentration_field, neighbours, ita = 1):
     :return: 2D numpy array of sticking probabilities for each cell at the growth boundary, normalized to sum to 1.
     """
     neighbour_mask = neighbours
-    concentration_clip = np.clip(concentration_field, a_min=0, a_max=None)  # ensure non-negative concentrations
+    concentration_clip = np.where(concentration_field < eps, 0.0, concentration_field)
     concentration_field_exp = np.zeros_like(concentration_field)
     concentration_field_exp[neighbour_mask] = np.power(concentration_clip[neighbour_mask], ita)
 
@@ -129,14 +132,18 @@ def outer_neighbors(A):
 
 
 if __name__ == '__main__':
-    N = 100
+    import time
+    N = 150
     grid_size = (N, N)
-    steps = 1000
+    steps = 10000
     stop_threshold = 0.1
     debug = False
-    ita = 0
+    ita = 2
 
-    final_grid = diffusion_limited_aggregation(grid_size, steps, stop_threshold, debug, ita=ita)
+    ts = time.perf_counter()
+    final_grid = diffusion_limited_aggregation(grid_size, steps, stop_threshold, debug, ita=ita, parallel=True)
+    te = time.perf_counter()
+    print(f"DLA simulation completed in {te - ts:.2f} seconds.")
     print("Final DLA cluster:")
     skel = skeletonize(final_grid > 0)
     plt.imshow(skel)
