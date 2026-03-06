@@ -41,6 +41,7 @@ def simulate_dla_mc_numba(
     np.random.seed(seed)
 
     cluster = np.zeros((N, N), dtype=np.bool_)
+    growth_order = np.zeros((N, N), dtype=np.int32) 
     # set seed
     y0 = 0
     x0 = N // 2
@@ -91,15 +92,16 @@ def simulate_dla_mc_numba(
                 if ps >= 1.0 or np.random.random() < ps:
                     cluster[y, x] = True
                     occupied += 1
+                    growth_order[y, x] = occupied
                     
                     # update top row count + stopping condition
                     if top_stop and y == N - 1:
                         top_count += 1
                         if (top_count / N) >= top_boundary_percentage_stop:
-                            return cluster
+                            return cluster, growth_order
 
                     break
 
-    return cluster
+    return cluster, growth_order
 
 

@@ -4,7 +4,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 from skimage.morphology import skeletonize
 
-def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 1000, stop_threshold: float = 0.5, debug: bool = False, ita: float = 1, omega: float = 1.9):
+def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 1000, stop_threshold: float = 0.5, debug: bool = False, ita: float = 1, omega: float = 1.9, return_growth_order=False):
     """Run a DLA simulation on a grid of given size with a specified number of particles.\n
     The process is as follows:\n
     1. Initialize an empty grid and place a seed particle at the bottom of the computational domain.\n
@@ -20,6 +20,7 @@ def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 1000,
     """
     #initialize grid
     grid = np.zeros(grid_size, dtype=int)
+    growth_order = np.zeros(grid_size, dtype=int)
     diffusion_grid = np.zeros(grid_size, dtype=float)
     diffusion_grid[0, :] = 1  # set top boundary to concentration 1
 
@@ -27,21 +28,26 @@ def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 1000,
     seed_x = grid_size[1] // 2
     seed_y = grid_size[0] - 1
     grid[seed_y, seed_x] = 1
+    growth_order[seed_y, seed_x] = 1
+    occupied = 1
 
     for i in range(steps):
         if debug:
             print(f"Step {i+1}/{steps} ...")
 
-        grid, diffusion_grid = dla_step(grid, diffusion_grid, debug=debug, ita = ita, omega = omega)
+        grid, diffusion_grid, growth_order, occupied = dla_step(
+            grid, diffusion_grid, growth_order, occupied,debug=debug, ita=ita, omega=omega)
 
         #check stopping condition
         occupied_percentage = np.mean(grid)
         if occupied_percentage >= stop_threshold:
             # print(f"Stopping simulation at step {i+1} due to reaching stop threshold ({occupied_percentage:.2%} occupied).")
             break
+    if return_growth_order:
+        return grid, growth_order
     return grid
 
-def dla_step(grid, diffusion_grid, debug=False, ita = 1, omega = 1.9):
+def dla_step(grid, diffusion_grid, growth_order, occupied, debug=False, ita = 1, omega = 1.9):
     """Perform one step of diffusion-limited aggregation (DLA) on the grid.\n
     One step consists of:\n
     1. Solve the time-independent diffusion equation (Laplace's equation) to get the concentration field.\n
@@ -79,8 +85,10 @@ def dla_step(grid, diffusion_grid, debug=False, ita = 1, omega = 1.9):
         print("No valid cells to stick to. Skipping this step.")
         return grid, diffusion_grid
     grid[selection] = 1
+    occupied += 1
+    growth_order[selection] = occupied
 
-    return grid, diffusion_grid
+    return grid, diffusion_grid, growth_order, occupied
 
 def select_stick_cell(probabilities):
     """
