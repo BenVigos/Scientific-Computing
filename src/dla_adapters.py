@@ -4,7 +4,7 @@ from src.diffusion_limited_aggregation import diffusion_limited_aggregation as p
 from src.mc import simulate_dla_mc_numba
 
 
-def simulate_pde_dla(*, N, steps, stop_threshold, ita, seed, debug=False, omega=1.9, return_growth_order=False):
+def simulate_pde_dla(*, N, steps, stop_threshold, ita, seed, debug=False, omega=1.9, return_growth_order=False, parallel: bool = False):
     """
     PDE-DLA adapter.
     Returns grid as uint8 with convention y=0 bottom 
