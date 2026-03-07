@@ -76,7 +76,7 @@ def dla_step(grid, prev_diffusion_grid, growth_order, occupied, debug=False, ita
     selection = select_stick_cell(probabilities)
     if selection is None:
         print("No valid cells to stick to. Ending simulation.")
-        return grid, diffusion_grid, False # return False to indicate simulation should end
+        return grid, diffusion_grid, growth_order, occupied, False # return False to indicate simulation should end
     grid[selection] = 1
     occupied += 1
     growth_order[selection] = occupied
@@ -95,7 +95,7 @@ def select_stick_cell(probabilities):
         # assert False, "No valid cells to stick to (all probabilities are zero). Check the concentration field and growth boundary."
         return None
     selection = np.random.choice(len(flat_probabilities), p=flat_probabilities)
-    row, col = np.unravel_index(selection, probabilities,shape)
+    row, col = np.unravel_index(selection, probabilities.shape)
     return row, col
 
 def compute_stick_prob(concentration_field, neighbours, ita = 1, eps = 1e-6):
