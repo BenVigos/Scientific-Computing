@@ -14,8 +14,8 @@ def omega_from_ita(ita):
 
 
 def plot_growth_panels(
-    pde_itas=(0.0, 1.0, 2.0),
-    mc_ps=(1.0, 0.2, 0.05),
+    pde_itas=(0.02, 1.0, 2.0),
+    mc_ps=(1.0, 0.2, 0.001),
     seeds=(0, 1, 2),
     N=100,
     pde_steps=2000,
@@ -154,8 +154,8 @@ def plot_growth_panels(
 
 if __name__ == "__main__":
     fig, axes = plot_growth_panels(
-        pde_itas=(0.0, 1.0, 2.0),
-        mc_ps=(1.0, 0.2, 0.05),
+        pde_itas=(2.0, 1.0, 0.2),
+        mc_ps=(1.0, 0.2, 0.001),
         seeds=(0, 1, 2),
         N=100,
         tick_fontsize=9,
@@ -163,4 +163,4 @@ if __name__ == "__main__":
         label_fontsize=13,
         show_ticks=False
     )
-    fig.savefig("../data/figs/dla_growth_panels.png", dpi=300, bbox_inches="tight")
+    fig.savefig("../data/comparison_figures/dla_growth_panels.png", dpi=300, bbox_inches="tight")

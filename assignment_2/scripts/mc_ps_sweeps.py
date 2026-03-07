@@ -14,7 +14,7 @@ def main():
     N = 100
     seed_center = (N // 2, 0)
 
-    ps_vals = [1.0, 0.5, 0.2, 0.1, 0.05]
+    ps_vals = [1.0, 0.5, 0.2, 0.1, 0.05, 0.001]
     run_experiments(
         simulate_fn=simulate_mc_dla,
         param_name="ps",

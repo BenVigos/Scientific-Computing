@@ -76,7 +76,7 @@ def dla_step(grid, prev_diffusion_grid, growth_order, occupied, debug=False, ita
     selection = select_stick_cell(probabilities)
     if selection is None:
         print("No valid cells to stick to. Ending simulation.")
-        return grid, growth_order, occupied, diffusion_grid, False # return False to indicate simulation should end
+        return grid, diffusion_grid, growth_order, occupied, False # return False to indicate simulation should end
     grid[selection] = 1
     occupied += 1
     growth_order[selection] = occupied
