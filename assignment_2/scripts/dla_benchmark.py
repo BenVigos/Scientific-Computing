@@ -54,7 +54,7 @@ if __name__ == '__main__':
         print(f'Parallel SOR: {avg_time:.4f} ± {std_time:.4f} seconds')
 
     # Create output directories
-    data_dir = Path('assignment_2/data/dla')
+    data_dir = Path('../data/dla')
     figures_dir = data_dir / 'figures'
     data_dir.mkdir(parents=True, exist_ok=True)
     figures_dir.mkdir(parents=True, exist_ok=True)
