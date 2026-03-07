@@ -30,15 +30,16 @@ if __name__ == '__main__':
     from src.grid import make_grid
     from src.iter_schemes import sor_numba, sor_numba_redblack
 
-    Ns = [25, 50, 75, 100, 125, 150, 175, 200]
+    Ns = [25, 50, 75, 100, 125, 150, 175, 200,225, 250]
     steps = 1000
     occupancy_threshold = 0.1
     ita = 1.0
     omega = 1.9
-    n_runs = 5
+    n_runs = 10
     normal_times = []
     parallel_times = []
     for N in Ns:
+        omega = 1.8
         print(f"N = {N}")
         grid_size = (N, N)
 
