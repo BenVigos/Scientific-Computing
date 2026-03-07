@@ -19,7 +19,8 @@ def simulate_pde_dla(*, N, steps, stop_threshold, ita, seed, debug=False, omega=
             debug=debug,
             ita=ita,
             omega=omega,
-            return_growth_order=True
+            return_growth_order=True,
+            parallel=parallel
         )
         grid = (grid > 0).astype(np.uint8)
         grid = np.flipud(grid)
@@ -32,7 +33,8 @@ def simulate_pde_dla(*, N, steps, stop_threshold, ita, seed, debug=False, omega=
         stop_threshold=stop_threshold,
         debug=debug,
         ita=ita,
-        omega=omega
+        omega=omega,
+        parallel=parallel
     )
     grid = (grid > 0).astype(np.uint8)
     grid = np.flipud(grid)

@@ -11,6 +11,9 @@ def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 1000,
     2. For each step, perform a DLA step to grow the cluster.\n
     3. Stop the simulation if the percentage of occupied cells in the grid exceeds the stop_threshold or if the specified number of steps is reached.
 
+    :param omega: over-relaxation parameter for the SOR solver (between 1 and 2, typically around 1.9 for optimal convergence).
+    :param return_growth_order: boolean flag to indicate whether to return the growth order of the cluster (the order in which cells were occupied) along with the final grid.
+    :param parallel: boolean flag to indicate whether to use the parallel version of the SOR solver for computing the diffusion field.
     :param grid_size: tuple (nx, ny) specifying the size of the grid.
     :param steps: number of particles to add to the cluster.
     :param stop_threshold: threshold for stopping the simulation based on the percentage of occupied cells in the grid (between 0 and 1).
@@ -54,6 +57,11 @@ def dla_step(grid, prev_diffusion_grid, growth_order, occupied, debug=False, ita
     2. Compute the sticking probability of each cell at the growth boundary based on the concentration field.\n
     3. Randomly select a cell at the growth boundary and add it to the cluster.
 
+    :param parallel: boolean flag to indicate whether to use the parallel version of the SOR solver for computing the diffusion field.
+    :param omega: over-relaxation parameter for the SOR solver (between 1 and 2, typically around 1.9 for optimal convergence).
+    :param occupied: number of occupied cells in the cluster so far (used to determine growth order).
+    :param growth_order: 2D numpy array that keeps track of the order in which cells were occupied (0 for unoccupied, 1 for the seed, 2 for the first added cell, etc.).
+    :param prev_diffusion_grid: 2D numpy array representing the diffusion field from the previous step, which can be used as an initial guess for the SOR solver to speed up convergence.
     :param grid: 2D numpy array representing the current state of the DLA cluster (1 for occupied, 0 for empty).
     :param debug: Boolean flag to enable debugging.
     :param ita: probability exponent
