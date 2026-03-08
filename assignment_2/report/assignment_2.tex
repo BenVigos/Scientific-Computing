@@ -26,22 +26,265 @@
 
 
 % the paper headers
-\markboth{Scientific~Computing~Course | University~of~Amsterdam | 22 Feb,~2026}{}
+\markboth{Scientific~Computing~Course | University~of~Amsterdam | 08 Mar,~2026}{}
 
 % make the title area
 \maketitle
 
 \section{Introduction} \label{intro}
 
-\IEEEPARstart{N}{umerical} 
+\IEEEPARstart{C}{omputational} models provide the mathematical foundation necessary for simulating complex physical systems in scientific computing. This report investigates three such models in scientific computing: Diffusion-Limited Aggregation (DLA) solved via the Laplace equation, a Monte Carlo approach to DLA, and the Gray-Scott reaction-diffusion system. The following sections outline the underlying theory for each model and detail the specific computational implementations addressed.
+
+\subsection{Diffusion-Limited Aggregation (DLA) via the Diffusion Equation}
+
+The diffusion-limited aggregation (DLA) is a growth model based on diffusing particles. The growth is started with a single seed (just a small square object in a single lattice point, at the bottom of the computational domain). As described in detail in the lecture notes, DLA can be modeled by solving the time independent diffusion equation (i.e. the Laplace equation), locating growth candidates around the cluster, and assigning a growth probability $p_{g}$ for each growth candidate, as a function of the concentration of diffusing nutrients at that growth location. 
+
+The probability for growth at each candidate is calculated by:
+
+\begin{equation}
+p_{g}(i,j)=\frac{c_{i,j}^{\eta}}{\sum_{growth~candidates}c_{i,j}^{\eta}}
+\end{equation}
+
+The parameter $\eta$ determines the shape of the object. For $\eta=1$ we get the normal DLA cluster. For $\eta<1$ the object becomes more compact (with $\eta=0$ resulting in the Eden cluster), and for $\eta>1$ the cluster becomes more open (and finally resembles say a lightning flash). 
+
+The primary task is to implement the growth model, paying special attention to the calculation of the growth probabilities. Simulations should be run on a $100\times100$ domain to investigate the influence of the $\eta$ parameter. Additionally, the simulation must be optimized to reduce the time required to solve the diffusion equation. Because the object grows slowly, it is advantageous to start a new SOR iteration with the solution of the previous growth step. Further optimization suggestions include parallelizing one of the iteration schemes or using a GPU to do the calculations.
+
+\subsection{Monte Carlo Simulation of DLA}
+
+DLA can also be simulated by releasing random walkers on a grid, and letting them walk until they hit the cluster. One random walker at a time is released in the system. It moves in steps, which are randomly chosen to be one lattice point up, down, left, or right. If the walker reaches a cell neighboring the cluster, the walker is stopped there, so that the cell with the walker becomes part of the cluster. Walkers start on a randomly chosen point on the top boundary. If a walker walks out of the system on the top or bottom boundary it is removed and a new one created instead. To mimic periodic boundary conditions in the horizontal direction, if it walks across the left or right boundary, it should enter the system from the other side. 
+
+The assignment asks to implement the Monte Carlo version of DLA and compare the resulting cluster to those obtained with the diffusion equation. While $\eta$ is fixed to 1, a sticking probability $p_{s}$ is introduced. If the walker enters a cell which is a neighbor of the cluster, it stops there with probability $p_{s}$. The objective is to run the simulation for different values of $p_{s}$ and plot the results to determine how the cluster shape depends on $p_{s}$.
+
+\subsection{The Gray-Scott Model - A Reaction-Diffusion System}
+
+The Gray-Scott model describes a system of chemical reactions, involving the two chemicals U and V. Both chemicals diffuse in the system, and also react with each other. U is continuously fed into the system. It then reacts with V to produce more V. V spontaneously decays into P, a reaction product which is not interacting with U and V. The reactions are:
+
+\begin{equation}
+U+2V\rightarrow3V
+\end{equation}
+\begin{equation}
+V\rightarrow P
+\end{equation}
+
+If $u$ and $v$ denote the concentrations of U and V, the following equations can be formulated:
+
+\begin{equation}
+\frac{\partial u}{\partial t}=D_{u}\nabla^{2}u-uv^{2}+f(1-u)
+\end{equation}
+\begin{equation}
+\frac{\partial v}{\partial t}=D_{v}\nabla^{2}v+uv^{2}-(f+k)v
+\end{equation}
+
+Here, $f$ controls the rate at which U is supplied, and $f+k$ controls the rate at which V decays. For different values of $f$ and $k$ a large variety of behaviors can be observed. 
+
+The goal is to implement the Gray-Scott model in two dimensions. The report must explain the discretization and how the equations and boundary conditions are implemented. Finally, the resulting concentrations of U and/or V must be plotted for several choices of the parameters. Recommended starting parameters are $\delta t=1$, $\delta x=1$, $D_{u}=0.16$, $D_{v}=0.08$, $f=0.035$, and $k=0.060$.
 
 \section{Methodology}
+
+\subsection{Diffusion Limited Aggregation}
+
+\subsection{Monte Carlo}
+
+    The simulation is implemented on a square lattice of size $N \times N$, with $N=100$, and boundary conditions as described in section \ref{intro}.  A single seed particle is placed at the bottom centre of the grid to initialise the cluster. Von Neumann neighborhood is used to compute the next permissible walker steps, and a sicking probability, $p_{s}$, determines if the particle attaches there or not. If the walker is not stopped, the random walk continues. 
+To ensure a fair comparison with the diffusion equation DLA model, the primary stopping condition is based on cluster mass by presribing a final occupancy of 10\% of the final grid. Additionally, a secondary stopping condition is introduced to prevent problematic cases in which the cluster blocks the top boundary, preventing new walkers from entering the system. If $99\%$ of the sites on the top boundary become occupied, the simulation is terminated. 
+
+    To investigate the influence of $p_{s}$ on cluster morphology, simulations are performed for several values:
+
+    \begin{equation}
+        p_{s} \in \{1.0, 0.5, 0.2, 0.1, 0.05, 0.001\}
+    \end{equation} 
+
+    
+    These values are spaced on a approximately algoritmic scale, as the most significant changes in cluster morphology occur for small values of $p_{s}$. For each $p_s$, an ensemble of $25$ simulations is performed using different random seeds. Cluster statistics are computed for each run and aggregated across seeds to obtain mean values and standard deviations.
+
+    \subsubsection{Cluster Metrics}
+        In order to compare the clusters produced by the two DLA models, several metrics are computed. The fractal dimension ($D$) of each cluster is estimated using a box-counting method. The occupied lattice is covered with boxes of varying size, and the number of boxes containing at least on occupied site is counted. $D$ is then obtained from the slope of the log-log plot of box size and number of occupied boxes. To characterise the spatial spread, the radius of gyration ($R_g$) is computed as:
+        \begin{equation}
+        R_g = \sqrt{\frac{1}{N_s} \sum_{i=1}^{N_s} \left( (x_i - x_c)^2 + (y_i - y_c)^2 \right)},
+        \end{equation} 
+        where $N_s$ is the number of occupied sites and $(x_c, y_c)$ denotes the center of mass of the cluster. Bounding-box density is computed by determining the smallest axis-aligned rectangle fully enclosing the cluster and computing the fraction of occupied sites within in. Maximum width, height, and aspect ratio are used to quantify the cluster shape and in order to identify the finite-size effects when the cluster approaches the domain boundaries. 
+
+        
+
+    
+\subsection{Gray-Scott model}
+
+    The numerical simulation of the Gray-Scott model requires translating continuous partial differential equations into a discrete computational framework. The model describes a system of chemical reactions, involving the two chemicals U and V. Both chemicals diffuse in the system, and also react with each other. The reaction rate at any point in space, is determined by the local concentrations of U and V. Specifically, U is continuously fed into the system. It then reacts with V to produce more V in an autocatalytic process described by $U+2V\rightarrow3V$. Simultaneously, V spontaneously decays into P, a reaction product which is not interacting with U and V, described by $V\rightarrow P$. If we let u and v denote the concentrations of U and V, the following equations can be formulated:
+
+    \begin{equation}
+        \frac{\partial u}{\partial t}=D_{u}\nabla^{2}u-uv^{2}+f(1-u)
+    \end{equation}
+    \begin{equation}
+        \frac{\partial v}{\partial t}=D_{v}\nabla^{2}v+uv^{2}-(f+k)v
+    \end{equation}
+    
+    Here, $D_u$ and $D_v$ are the diffusion coefficients, $f$ controls the rate at which U is supplied, and $f+k$ controls the rate at which V decays. To numerically implement the Gray-Scott model in two dimensions, the continuous domain is discretized into a uniform Cartesian grid. The spatial diffusion terms, represented by the Laplacian operator $\nabla^2$, are approximated using a standard second-order central finite-difference scheme.  Specifically, a 5-point stencil is applied at each grid point $(i, j)$:
+    
+    \begin{equation}
+    \nabla^2 u_{i,j} \approx \frac{u_{i+1,j} + u_{i-1,j} + u_{i,j+1} + u_{i,j-1} - 4u_{i,j}}{\delta x^2}
+    \end{equation}
+    
+    For the temporal evolution, a Forward Euler explicit integration scheme is employed. The state of the system at the next time step $t + \delta t$ is calculated explicitly from the state at the current time step $t$. The discrete update rules are thus formulated as:
+    
+    \begin{equation}
+        u^{t+1}_{i,j} = u^{t}_{i,j} + \delta t \left( D_{u} \nabla^2 u^{t}_{i,j} - u^{t}_{i,j}(v^{t}_{i,j})^2 + f(1 - u^{t}_{i,j}) \right)
+    \end{equation}
+    \begin{equation}
+        v^{t+1}_{i,j} = v^{t}_{i,j} + \delta t \left( D_{v} \nabla^2 v^{t}_{i,j} + u^{t}_{i,j}(v^{t}_{i,j})^2 - (f+k)v^{t}_{i,j} \right)
+    \end{equation}
+    
+    In accordance with the recommended baseline parameters, the simulation starts with $\delta t=1$, $\delta x=1$, $D_{u}=0.16$, $D_{v}=0.08$, $f=0.035$, and $k=0.060$. 
+    
+    To eliminate edge effects and properly handle how boundary conditions are implemented in the program, periodic boundaries are utilized. Computationally, this is achieved by treating the two-dimensional grid as a torus; spatial shifts required for the finite-difference stencil gracefully wrap around the grid edges. Consequently, any chemical diffusing out of the right boundary immediately re-enters through the left boundary, and similarly for the top and bottom edges.
+    
+    The initialization of the concentration fields profoundly impacts the evolutionary trajectory of the system. Following the standard setup for the initial conditions, you can take $u=0.5$ everywhere in the system, and $v=0.25$ in a small square in the center of the system, and 0 outside. Crucially, the methodology includes adding a small amount of noise too. In a perfectly symmetric setup, the deterministic nature of the discretized equations would strictly preserve symmetry. The introduction of microscopic, normally distributed random noise acts as a catalyst for symmetry breaking, triggering local instabilities that allow complex, organic macroscopic patterns to emerge dynamically from the nonlinear reaction terms.
+    
+    Finally, to investigate the diverse behaviors of the model across different parameter spaces, the computational framework conducts structured sweeps across various pairings of $f$ and $k$. To quantitatively assess system behaviors near the thermodynamic limits of the model, the methodology also includes a time-series analysis of the global mean concentrations of both chemicals. This is particularly relevant when evaluating initial condition dependencies. In certain sensitive parameter regimes, starting with the baseline concentration of $u=0.5$ results in rapid system starvation, wherein the decay rate of V outpaces its autocatalytic reproduction, driving the global mean of V to zero and yielding a blank steady state. By systematically varying the initial base concentration (e.g., $u_{init} = 1.0$ versus $u_{init} = 0.5$) and plotting the temporal mean alongside the spatial matrices, the exact threshold between pattern formation and extinction can be rigorously analyzed.
 
  
 \section{Results}
 
 
+
+
+\subsection{Diffusion Limited Aggregation}
+
+\subsection{Monte Carlo}
+
+
+Figure X shows representative clusters produced by both the diffusion-equation and Monte Carlo implementations of DLA for different parameter values and random seeds. The colour scale indicates the order in which particles were added to the cluster.
+
+(describe normal dla here)
+
+When $p_s=1$, walkers attach immediately upon contacting the cluster, producing highly branched morphology. As $p_s$ decreases, walkers are more likely to continue diffusing along the cluster boundary before attaching, allowing them to penetrate deeper into the structure. This results in progressively denser and more compact clusters, as illustrated for $p_s=0.2$ and $p_s=0.001$.
+
+The bounding-box density provides a measure of cluster compactness. The results are shown in Figure X. For the diffusion-equation model, the density decreases monotonically as $\eta$ increases. The values vary from approximately $0.62$ for $\eta = 0$  to $0.04$ for $\eta = 2$.  A similar trend is observed in the Monte Carlo model, although the density range appears to be smaller: $0.45-0.11$. Moreover, the trend for MC appears to be logarithmic, while for the diffusion-equation model, the dependence is approximately linear.
+
+The estimated fractal dimension of the clusters is shown in Figure X. For both models, the fractal dimension decreases as their respective varied parameters increase.  The relationship between $D$ and $\eta$ appears linear for both models. For the diffusion-equation model, the values of $D$ are decreasing monotonically for $\eta \in (0,1)$ from  $1.75$ to $1.52$, after which a a sharp drop can be observed: $D=1.3$ for $\eta=1.2$.  For the rest of the $\eta$ values, the slope returns to approximately similar steepness, and the final value observed for the fractal dimension is 1.15.  For the MC model, the trend line also shows segmentation: a steeper slope for $p_s \in (0, 0.2)$ with a drop from $D=1.7$ to $D=1.55$, and a gentler? decrease for higher $p_s$ values, with a final fractal dimension value of $D=1.3$. 
+
+The spatial extent of the clusters can be characterised using the radius of gyration, $R_g$, shown in Figure X. For both models, $R_g$ increases as $\eta$ and $p_s$ inc
+\begin{figure}
+    \centering
+    \includegraphics[width=0.5\linewidth]{examples_2.png}
+    \caption{Enter Caption}
+    \label{fig:3x6}
+\end{figure}
+
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.5\linewidth]{density2.png}
+    \caption{Enter Caption}
+    \label{fig:density}
+\end{figure}
+
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.5\linewidth]{fractal2.png}
+    \caption{Enter Caption}
+    \label{fig:fractal}
+\end{figure}
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.5\linewidth]{rg2.png}
+    \caption{Enter Caption}
+    \label{fig:rg}
+\end{figure}
+
+
+\begin{table}[h]
+\centering
+\label{tab:shape_comparison}
+\begin{tabular}{cccc}
+\toprule
+Parameter & Max width & Height & Aspect ratio \\
+\midrule
+\multicolumn{4}{c}{\textbf{Diffusion equation model}} \\
+\midrule
+$\eta = 0.0$ & $52.92 \pm 2.52$ & $30.16 \pm 2.43$ & $1.77 \pm 0.20$ \\
+$\eta = 0.2$ & $53.96 \pm 4.85$ & $39.84 \pm 3.69$ & $1.37 \pm 0.23$ \\
+$\eta = 0.4$ & $54.36 \pm 5.04$ & $48.60 \pm 3.80$ & $1.13 \pm 0.16$ \\
+$\eta = 0.6$ & $56.76 \pm 4.83$ & $60.52 \pm 4.81$ & $0.94 \pm 0.12$ \\
+$\eta = 0.8$ & $54.68 \pm 5.50$ & $76.92 \pm 6.28$ & $0.72 \pm 0.11$ \\
+$\eta = 1.0$ & $60.12 \pm 13.66$ & $94.72 \pm 6.09$ & $0.64 \pm 0.14$ \\
+$\eta = 1.2$ & $95.72 \pm 12.15$ & $100.00 \pm 0.00$ & $0.96 \pm 0.12$ \\
+$\eta = 1.4$ & $100.00 \pm 0.00$ & $100.00 \pm 0.00$ & $1.00 \pm 0.00$ \\
+$\eta = 1.6$ & $100.00 \pm 0.00$ & $100.00 \pm 0.00$ & $1.00 \pm 0.00$ \\
+$\eta = 1.8$ & $100.00 \pm 0.00$ & $100.00 \pm 0.00$ & $1.00 \pm 0.00$ \\
+$\eta = 2.0$ & $100.00 \pm 0.00$ & $100.00 \pm 0.00$ & $1.00 \pm 0.00$ \\
+
+\midrule
+\multicolumn{4}{c}{\textbf{Monte Carlo model}} \\
+\midrule
+$p_s = 0.001$ & $45.56 \pm 3.25$ & $49.08 \pm 3.12$ & $0.93 \pm 0.12$ \\
+$p_s = 0.05$ & $48.28 \pm 4.50$ & $63.84 \pm 5.84$ & $0.77 \pm 0.12$ \\
+$p_s = 0.10$ & $49.28 \pm 6.29$ & $72.44 \pm 6.84$ & $0.69 \pm 0.13$ \\
+$p_s = 0.20$ & $52.68 \pm 7.37$ & $86.48 \pm 7.43$ & $0.62 \pm 0.13$ \\
+$p_s = 0.50$ & $63.80 \pm 8.67$ & $97.48 \pm 4.78$ & $0.66 \pm 0.10$ \\
+$p_s = 1.00$ & $91.60 \pm 14.49$ & $99.92 \pm 0.40$ & $0.92 \pm 0.14$ \\
+\bottomrule
+\end{tabular}
+\caption{Cluster shape statistics for the diffusion-equation and Monte Carlo DLA models. 
+Values show mean $\pm$ standard deviation across 25 simulation seeds. 
+The grid size is $N=100$.}
+\end{table}
+
+
+\subsection{Gray-Scott model}
+
+    The numerical simulations of the Gray-Scott reaction-diffusion system reveal a large variety of behaviors heavily dependent on the interplay between the feed rate $f$ and the decay rate $k$. To investigate this, we plot the resulting concentrations of U and/or V for several choices of the parameters. 
+    
+    For the baseline configuration utilizing $f=0.035$ and $k=0.060$, the time evolution highlights the emergence of macroscopic complexity from simple initial conditions. As specified, the system was initialized with $u=0.5$ everywhere, $v=0.25$ restricted to a small central square, and 0 outside , along with a small amount of added noise. Figure \ref{fig:evolution} captures this progression over 10,000 steps. As observed in the early temporal stages (e.g., Step 2000), the microscopic noise prevents the initial square from expanding uniformly. Instead, it triggers local instabilities that destabilize the diffusion front, eventually leading to an expanding, highly intricate labyrinthine structure that permeates the entire computational domain and forms stable patterns.
+    
+    \begin{figure}[htbp]
+        \centering
+        \includegraphics[width=\linewidth]{assignment_2/report/images/gray_scott_evolution_base.png}
+        \caption{Time evolution of the concentration of V over 10,000 steps utilizing the baseline parameters $f=0.035$ and $k=0.060$.}
+        \label{fig:evolution}
+    \end{figure}
+    
+    An extended parameter sweep, presented in Figure \ref{fig:sweep}, illustrates the system's sensitivity to thermodynamic tuning. While Configuration 1 yields the aforementioned labyrinthine stripes, Configuration 2 ($f=0.025, k=0.052$) shifts the equilibrium, causing the reaction fronts to pinch off into a stable phase of isolated, uniformly distributed spots. Configuration 3 ($f=0.055, k=0.062$) produces a much denser, tightly packed network of structures. In all pattern-forming regimes, the spatial distributions of U and V are strictly inversely correlated; regions of high V concentration perfectly mirror regions of depleted U, physically reflecting the localized autocatalytic consumption of the U chemical where $U+2V\rightarrow3V$.
+    
+    \begin{figure}[htbp]
+        \centering
+        \includegraphics[width=0.85\linewidth]{assignment_2/report/images/gray_scott_parameters_UV.png}
+        \caption{Steady-state spatial distributions of U and V concentrations across four different parameter configurations.}
+        \label{fig:sweep}
+    \end{figure}
+    
+    Conversely, Configuration 4 ($f=0.014, k=0.054$) exposes a fragile boundary condition within the parameter space. When utilizing the baseline initial conditions ($u_{init} = 0.5$), the simulation yields a completely uniform, featureless state, as shown in the left panel of Figure \ref{fig:config4_spatial}. This is not a failure of the numerical scheme, but rather a physical "starvation" dynamic. 
+    
+    \begin{figure}[htbp]
+        \centering
+        \includegraphics[width=\linewidth]{assignment_2/report/images/config4_analysis_spatial.png}
+        \caption{Spatial analysis of Configuration 4 ($f=0.014, k=0.054$), contrasting the extinction state ($u_{init}=0.5$) with pattern formation ($u_{init}=1.0$).}
+        \label{fig:config4_spatial}
+    \end{figure}
+    
+    A time-series analysis of the global mean concentrations, detailed in Figure \ref{fig:config4_stats}, demonstrates that with an initial U concentration of $0.5$, the local decay rate of V rapidly outpaces its autocatalytic reproduction. The mean concentration of V collapses to precisely zero almost immediately. Once V is eradicated, the reaction ceases entirely, allowing the constant feed rate $f$ to gradually saturate the domain with U until its mean concentration asymptotes to 1.0. To prove that this parameter set is capable of pattern formation, the initial fuel condition was adjusted to $u_{init} = 1.0$. By providing sufficient initial concentration of U, the system avoids early extinction. The corresponding spatial (Figure \ref{fig:config4_spatial}, right panel) and statistical analyses (Figure \ref{fig:config4_stats}, right panel) confirm that V survives the initial decay phase, organizing into localized, mobile structures. The global mean concentrations of both chemicals subsequently achieve a dynamic, non-zero equilibrium, perfectly illustrating that fragile regimes remain time-dependent and exquisitely sensitive to initial conditions.
+    
+    \begin{figure}[htbp]
+        \centering
+        \includegraphics[width=\linewidth]{assignment_2/report/images/config4_analysis_stats.png}
+        \caption{Global mean concentration over time for Configuration 4, quantitatively demonstrating the starvation dynamic versus survival based on initial U concentration.}
+        \label{fig:config4_stats}
+    \end{figure}
+
+
 \section{Discussion}
+
+\subsection{Gray-Scott model}
+
+The simulations of the Gray-Scott model successfully demonstrate how complex, macroscopic patterns emerge from simple, local nonlinear chemical reactions. The addition of microscopic noise to the initial conditions proved fundamentally crucial; without it, the deterministic nature of the finite-difference scheme would strictly preserve the initial geometry. Adding a small amount of noise acts as a catalyst for symmetry breaking, seeding the local instabilities necessary for organic pattern formation. Furthermore, our results confirm that for different values of $f$ and $k$, a large variety of behaviors can be observed. While some parameter pairings result in stable patterns, others remain time-dependent or lead to complete system extinction.
+
+A significant observation from the parameter sweeps is the profound sensitivity of the model to its initial state, particularly near the phase transition boundaries. The starvation dynamic observed in Configuration 4 highlighted a critical limitation in applying a universal set of initial conditions across all parameter regimes. Relying strictly on the baseline assumption where one takes $u=0.5$ everywhere in the system, and $v=0.25$ in a small square in the center of the system, artificially suppressed pattern formation in fuel-scarce regimes. Adjusting the initial concentration of U to 1.0 prevented the premature decay of V, underscoring that the system's final state is not solely dictated by the feed and kill rates, but is highly path-dependent and sensitive to initial thermodynamic constraints.
+
+Several assumptions and limitations in the current methodology warrant consideration. The implementation assumes a perfectly isotropic, two-dimensional domain with periodic boundary conditions. While this successfully isolates the reaction-diffusion mechanics from edge effects, it is an idealization that does not capture the complex, restrictive boundary geometries found in actual biological or chemical systems. Additionally, the use of an explicit Forward Euler time integration scheme, while computationally straightforward to implement, is only conditionally stable. This restricts the simulation to relatively small time steps, limiting the ability to efficiently simulate very long timescales without risking numerical instability.
+
+Future work could address these limitations by implementing semi-implicit or fully implicit numerical schemes, such as the Crank-Nicolson method or Alternating Direction Implicit algorithms, which would allow for unconditionally stable integration and vastly larger time steps. Extending the spatial discretization to three dimensions would also provide a more realistic representation of chemical diffusion in physical mediums. Furthermore, a highly systematic exploration of the entire parameter space for $f$ and $k$ could be automated to map out the exact phase boundaries of the model. Finally, introducing spatially varying diffusion coefficients or localized feed rates could simulate environmental heterogeneities, opening pathways to computationally model complex biological phenomena such as tissue morphogenesis or cellular differentiation.
+
 
 
 \section{Conclusion}
