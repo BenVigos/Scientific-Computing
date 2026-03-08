@@ -79,3 +79,114 @@ python -m venv .venv
 pip install numpy scipy matplotlib
 ```
 
+The structure of the repository for Assignment 2 is as follows:
+
+```
+» assignment_2
+    » data
+        » comparison_figures
+            » bbox_density_comparison.png
+            » D_est_comparison.png
+            » dla_growth_panels.pdf
+            » dla_growth_panels.png
+            » R_g_comparison.png
+        » dla
+            » figures
+                » omega_optimization
+                    » omega_boxplots.png
+                    » omega_ita_heatmap.png
+                    » omega_vs_mean_iterations.png
+                    » omega_vs_stability.png
+                    » omega_vs_total_iterations.png
+                » all_metric_trends_vs_ita.png
+                » all_metric_trends.png
+                » aspect_ratio_boxplot_vs_ita.png
+                » aspect_ratio_boxplot.png
+                » bbox_density_boxplot_vs_ita.png
+                » branching_ratio_boxplot.png
+                » branchpoints_boxplot.png
+                » D_est_boxplot_vs_ita.png
+                » D_est_boxplot.png
+                » D_r_boxplot.png
+                » D_vs_Rg_scatter.png
+                » dla_benchmark_comparison.png
+                » endpoints_boxplot.png
+                » height_boxplot_vs_ita.png
+                » height_boxplot.png
+                » max_width_boxplot_vs_ita.png
+                » max_width_boxplot.png
+                » metric_trends.png
+                » metrics_boxplots_vs_ita.png
+                » metrics_boxplots.png
+                » metrics_correlation.png
+                » metrics_pairplot.png
+                » occupancy_boxplot_vs_ita.png
+                » occupancy_boxplot.png
+                » perimeter_boxplot_vs_ita.png
+                » perimeter_boxplot.png
+                » perimeter_per_occupied_boxplot_vs_ita.png
+                » R_g_boxplot_vs_ita.png
+                » R_g_boxplot.png
+                » skeleton_length_boxplot.png
+            » dla_benchmark_results.csv
+            » dla_omega_convergence.csv
+            » pde_ita_metrics_big.csv
+            » pde_ita_metrics.csv
+        » dla_mc
+            » figures
+                » all_metric_trends_vs_ps.png
+                » aspect_ratio_boxplot_vs_ps.png
+                » bbox_density_boxplot_vs_ps.png
+                » D_est_boxplot_vs_ps.png
+                » height_boxplot_vs_ps.png
+                » max_width_boxplot_vs_ps.png
+                » metrics_boxplots_vs_ps.png
+                » metrics_correlation.png
+                » metrics_pairplot.png
+                » occupancy_boxplot_vs_ps.png
+                » perimeter_boxplot_vs_ps.png
+                » perimeter_per_occupied_boxplot_vs_ps.png
+                » R_g_boxplot_vs_ps.png
+            » mc_ps_metrics.csv
+        » .gitkeep
+    » notebooks
+        » .gitkeep
+    » outputs
+        » config4_analysis_spatial.png
+        » config4_analysis_stats.png
+        » gray_scott_evolution_base.png
+        » gray_scott_parameters_UV.png
+    » report
+        » images
+            » config4_analysis_spatial.png
+            » config4_analysis_stats.png
+            » gray_scott_evolution_base.png
+            » gray_scott_parameters_UV.png
+        » assignment_2.tex
+    » scripts
+        » .gitkeep
+        » dla_benchmark.py
+        » dla_example_plots.py
+        » dla_experiment_runner.py
+        » dla_metrics.csv
+        » dla_omega_opt.py
+        » gray_scott.py
+        » mc_ps_sweeps.py
+        » pde_ita_sweeps.py
+        » results_table_helper.py
+```
+
+All the relevant scripts for the assignment are in `assignment_2/scripts/`. Run the scripts to reproduce the figures and animations for the DLA and Gray–Scott experiments. The scripts are designed to save outputs (images, animations) to the current working directory by default, so you can run them from anywhere.
+
+- dla_benchmark.py — runs the DLA benchmark experiment for normal and parallel SOR
+- dla_example_plots.py — runs both DLA implementations to obtain representative cluster plots.
+- dla_experiment_runner.py — runs the DLA experiments with multiple random seeds and saves the computed metrics to a cvs file.
+- dla_omega_opt.py — runs the SOR omega optimization experiment for the DLA problem and saves the convergence plot
+- gray_scott.py — runs a single Gray–Scott simulation and saves the final concentration fields as images
+- mc_ps_sweep.py — runs the Monte Carlo parameter sweep for the system and saves the computed metrics.
+- pde_ita_sweeps.py — runs the PDE-ITA parameter sweeps for the system and saves the computed metrics.
+- results_table_helper.py — helper script to generate a table of results from the parameter sweeps for LaTeX report.
+
+Outputs (where you will find saved plots and videos)
+
+The outputs for the experiments are saved to the `data` folder under `assignment_2` by default. 
