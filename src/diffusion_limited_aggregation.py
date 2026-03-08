@@ -3,6 +3,7 @@ from src.iter_schemes import sor_numba, sor_numba_redblack
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from skimage.morphology import skeletonize
+import time
 
 def diffusion_limited_aggregation(grid_size: tuple[int, int], steps: int = 1000, stop_threshold: float = 0.5, debug: bool = False, ita: float = 1, omega: float = 1.9, return_growth_order=False, parallel: bool = False):
     """Run a DLA simulation on a grid of given size with a specified number of particles.\n
@@ -68,9 +69,15 @@ def dla_step(grid, prev_diffusion_grid, growth_order, occupied, debug=False, ita
     """
     insulator_mask = np.zeros(grid.shape, dtype=np.bool_)
     if parallel:
-        diffusion_grid, _, _  = sor_numba_redblack(len(grid),omega= omega, c=prev_diffusion_grid, sink=grid, insulator=insulator_mask, max_iter=100000, tol=1e-5)
+        diffusion_grid, _, _ = sor_numba_redblack(
+            np.int64(len(grid)), omega=omega, c=prev_diffusion_grid,
+            sink=grid, insulator=insulator_mask, max_iter=100000, tol=1e-5
+        )
     else:
-        diffusion_grid, _, _  = sor_numba(len(grid),omega= omega, c=prev_diffusion_grid, sink=grid, insulator=insulator_mask, max_iter=100000, tol=1e-5)
+        diffusion_grid, _, _ = sor_numba(
+            np.int64(len(grid)), omega=omega, c=prev_diffusion_grid,
+            sink=grid, insulator=insulator_mask, max_iter=100000, tol=1e-5
+        )
 
     #compute sticking probabilities at growth boundary
     neighbours = outer_neighbors(grid)
@@ -149,7 +156,7 @@ def outer_neighbors(A):
 
 if __name__ == '__main__':
     import time
-    N = 125
+    N = 300
     grid_size = (N, N)
     steps = 10000
     stop_threshold = 0.1

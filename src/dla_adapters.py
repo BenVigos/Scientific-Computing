@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 
 from src.diffusion_limited_aggregation import diffusion_limited_aggregation as pde_dla
@@ -26,7 +28,6 @@ def simulate_pde_dla(*, N, steps, stop_threshold, ita, seed, debug=False, omega=
         grid = np.flipud(grid)
         growth_order = np.flipud(growth_order)
         return grid, growth_order
-
     grid = pde_dla(
         (N, N),
         steps=steps,

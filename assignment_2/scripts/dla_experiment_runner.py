@@ -71,7 +71,7 @@ def run_experiments(
     outer = tqdm(param_values, desc=f"sweep {param_name}") if show_progress else param_values
 
     for val in outer:
-        for seed in range(seeds_per_value):
+        for seed in tqdm(range(seeds_per_value)):
             kwargs = dict(static_params)
             kwargs[param_name] = val
             kwargs["seed"] = seed
