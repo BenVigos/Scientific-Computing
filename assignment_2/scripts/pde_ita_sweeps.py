@@ -18,7 +18,7 @@ def main():
     out_dir = os.path.join(os.getcwd(), "..", "data", "dla")
     os.makedirs(out_dir, exist_ok=True)
 
-    N = 300
+    N = 100
     seed_center = (N // 2, 0)
 
     ita_vals = np.arange(0.0, 2.2, 0.2)
@@ -42,7 +42,7 @@ def main():
                 "stop_threshold": 0.10,
                 "debug": False,
                 "omega": omega,
-                "parallel": True,
+                "parallel": False,
             },
             show_progress=False,
         )

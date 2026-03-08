@@ -81,9 +81,12 @@ def plot_metric_comparison(
     line_width=2.2,
     marker_size=6,
     alpha_band=0.20,
+    df_pde_big=None,
+    pde_big_legend=None,
 ):
     """
     Two-panel comparison plot with shared y-axis and clean labels.
+    If df_pde_big is provided, plot both PDE datasets in the same panel with legends.
     """
 
     sns.set_style("whitegrid")
@@ -98,6 +101,11 @@ def plot_metric_comparison(
     df_pde = df_pde.dropna(subset=[pde_param_col])
     df_mc = df_mc.dropna(subset=[mc_param_col])
 
+    if df_pde_big is not None:
+        df_pde_big = df_pde_big.copy()
+        df_pde_big[pde_param_col] = pd.to_numeric(df_pde_big[pde_param_col], errors="coerce").round(1)
+        df_pde_big = df_pde_big.dropna(subset=[pde_param_col])
+
     metric_label = metric_label or METRIC_LABELS.get(metric, metric)
     pde_xlabel = PARAM_LABELS.get(pde_param_col, pde_param_col)
     mc_xlabel = PARAM_LABELS.get(mc_param_col, mc_param_col)
@@ -105,6 +113,9 @@ def plot_metric_comparison(
     # grouped data
     x_pde, mean_pde, std_pde = _prepare_grouped(df_pde, pde_param_col, metric)
     x_mc, mean_mc, std_mc = _prepare_grouped(df_mc, mc_param_col, metric)
+
+    if df_pde_big is not None:
+        x_pde_big, mean_pde_big, std_pde_big = _prepare_grouped(df_pde_big, pde_param_col, metric)
 
     lower_pde, upper_pde = _get_metric_bounds(metric, df_pde)
     lower_mc, upper_mc = _get_metric_bounds(metric, df_mc)
@@ -115,9 +126,16 @@ def plot_metric_comparison(
     y_low_pde, y_high_pde = _clip_band(mean_pde, std_pde, lower, upper)
     y_low_mc, y_high_mc = _clip_band(mean_mc, std_mc, lower, upper)
 
+    if df_pde_big is not None:
+        y_low_pde_big, y_high_pde_big = _clip_band(mean_pde_big, std_pde_big, lower, upper)
+
     # compute common y-limits from BOTH panels
     combined_low = min(np.min(y_low_pde), np.min(y_low_mc))
     combined_high = max(np.max(y_high_pde), np.max(y_high_mc))
+
+    if df_pde_big is not None:
+        combined_low = min(combined_low, np.min(y_low_pde_big))
+        combined_high = max(combined_high, np.max(y_high_pde_big))
 
     if lower is not None:
         combined_low = max(combined_low, lower)
@@ -129,29 +147,57 @@ def plot_metric_comparison(
     y_min = combined_low - pad if lower is None else max(lower, combined_low - pad)
     y_max = combined_high + pad if upper is None else min(upper, combined_high + pad)
 
-    fig, axes = plt.subplots(1, 2, figsize=figsize, sharey=True)
+    if df_pde_big is None:
+        fig, axes = plt.subplots(1, 2, figsize=figsize, sharey=True)
 
-    # PDE panel
-    ax = axes[0]
-    ax.plot(x_pde, mean_pde, marker="o", linewidth=line_width, markersize=marker_size)
-    ax.fill_between(x_pde, y_low_pde, y_high_pde, alpha=alpha_band)
-    if panel_titles:
-        ax.set_title(pde_panel_title, fontsize=panel_title_fontsize)
-    ax.set_xlabel(pde_xlabel, fontsize=label_fontsize)
-    ax.set_ylabel(metric_label, fontsize=label_fontsize)
-    ax.tick_params(axis="both", labelsize=tick_fontsize)
-    ax.set_ylim(y_min, y_max)
+        # PDE panel
+        ax = axes[0]
+        ax.plot(x_pde, mean_pde, marker="o", linewidth=line_width, markersize=marker_size)
+        ax.fill_between(x_pde, y_low_pde, y_high_pde, alpha=alpha_band)
+        if panel_titles:
+            ax.set_title(pde_panel_title, fontsize=panel_title_fontsize)
+        ax.set_xlabel(pde_xlabel, fontsize=label_fontsize)
+        ax.set_ylabel(metric_label, fontsize=label_fontsize)
+        ax.tick_params(axis="both", labelsize=tick_fontsize)
+        ax.set_ylim(y_min, y_max)
 
-    # MC panel
-    ax = axes[1]
-    ax.plot(x_mc, mean_mc, marker="o", linewidth=line_width, markersize=marker_size)
-    ax.fill_between(x_mc, y_low_mc, y_high_mc, alpha=alpha_band)
-    if panel_titles:
-        ax.set_title(mc_panel_title, fontsize=panel_title_fontsize)
-    ax.set_xlabel(mc_xlabel, fontsize=label_fontsize)
-    # ax.set_ylabel(metric_label, fontsize=label_fontsize)
-    ax.tick_params(axis="both", labelsize=tick_fontsize)
-    ax.set_ylim(y_min, y_max)
+        # MC panel
+        ax = axes[1]
+        ax.plot(x_mc, mean_mc, marker="o", linewidth=line_width, markersize=marker_size)
+        ax.fill_between(x_mc, y_low_mc, y_high_mc, alpha=alpha_band)
+        if panel_titles:
+            ax.set_title(mc_panel_title, fontsize=panel_title_fontsize)
+        ax.set_xlabel(mc_xlabel, fontsize=label_fontsize)
+        # ax.set_ylabel(metric_label, fontsize=label_fontsize)
+        ax.tick_params(axis="both", labelsize=tick_fontsize)
+        ax.set_ylim(y_min, y_max)
+    else:
+        fig, axes = plt.subplots(1, 2, figsize=figsize, sharey=True)
+
+        # PDE panel with both datasets
+        ax = axes[0]
+        ax.plot(x_pde, mean_pde, marker="o", linewidth=line_width, markersize=marker_size, label="normal: N=100")
+        ax.fill_between(x_pde, y_low_pde, y_high_pde, alpha=alpha_band)
+        ax.plot(x_pde_big, mean_pde_big, marker="s", linewidth=line_width, markersize=marker_size, label=pde_big_legend or "optimizes: N=300")
+        ax.fill_between(x_pde_big, y_low_pde_big, y_high_pde_big, alpha=alpha_band)
+        if panel_titles:
+            ax.set_title(pde_panel_title, fontsize=panel_title_fontsize)
+        ax.set_xlabel(pde_xlabel, fontsize=label_fontsize)
+        ax.set_ylabel(metric_label, fontsize=label_fontsize)
+        ax.tick_params(axis="both", labelsize=tick_fontsize)
+        ax.set_ylim(y_min, y_max)
+        ax.legend(fontsize=label_fontsize)
+
+        # MC panel
+        ax = axes[1]
+        ax.plot(x_mc, mean_mc, marker="o", linewidth=line_width, markersize=marker_size)
+        ax.fill_between(x_mc, y_low_mc, y_high_mc, alpha=alpha_band)
+        if panel_titles:
+            ax.set_title(mc_panel_title, fontsize=panel_title_fontsize)
+        ax.set_xlabel(mc_xlabel, fontsize=label_fontsize)
+        # ax.set_ylabel(metric_label, fontsize=label_fontsize)
+        ax.tick_params(axis="both", labelsize=tick_fontsize)
+        ax.set_ylim(y_min, y_max)
 
     if show_title:
         fig.suptitle(figure_title or metric_label, fontsize=title_fontsize)
@@ -177,15 +223,22 @@ def make_comparison_figures(
     line_width=2.2,
     marker_size=6,
     alpha_band=0.20,
+    pde_big_csv_path=None,
+    pde_big_legend=None,
 ):
     os.makedirs(out_dir, exist_ok=True)
 
     df_pde = pd.read_csv(pde_csv_path)
     df_mc = pd.read_csv(mc_csv_path)
+    df_pde_big = pd.read_csv(pde_big_csv_path) if pde_big_csv_path is not None else None
 
     for metric in metrics:
         if metric not in df_pde.columns or metric not in df_mc.columns:
             print(f"Skipping {metric}: not found in both CSVs.")
+            continue
+
+        if df_pde_big is not None and metric not in df_pde_big.columns:
+            print(f"Skipping {metric}: not found in pde_big CSV.")
             continue
 
         out_path = os.path.join(out_dir, f"{metric}_comparison.png")
@@ -208,6 +261,8 @@ def make_comparison_figures(
             line_width=line_width,
             marker_size=marker_size,
             alpha_band=alpha_band,
+            df_pde_big=df_pde_big,
+            pde_big_legend=pde_big_legend,
         )
 
     print("Saved comparison figures to:", os.path.abspath(out_dir))
@@ -229,5 +284,7 @@ if __name__ == "__main__":
         line_width=2.2,
         marker_size=6,
         alpha_band=0.18,
+        pde_big_csv_path="../assignment_2/data/dla/pde_ita_metrics_big.csv",
+        pde_big_legend="optimized: N=300",
     )
 
