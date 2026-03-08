@@ -230,4 +230,7 @@ if __name__ == "__main__":
         label_fontsize=13,
         show_ticks=False
     )
-    fig.savefig("../data/comparison_figures/dla_growth_panels.png", dpi=300, bbox_inches="tight")
+    # Save as PDF (vector format - best for LaTeX documents)
+    fig.savefig("../data/comparison_figures/dla_growth_panels.pdf", dpi=300, bbox_inches="tight", format='pdf')
+    # Also save as high-resolution PNG as backup
+    fig.savefig("../data/comparison_figures/dla_growth_panels.png", dpi=600, bbox_inches="tight", format='png')
