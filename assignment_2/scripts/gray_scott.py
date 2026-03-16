@@ -9,7 +9,7 @@ Du = 0.16
 Dv = 0.08
 noise_amp = 0.02
 
-output_dir = "assignment_2/outputs"
+output_dir = "assignment_2/data/gray_scott"
 os.makedirs(output_dir, exist_ok=True)
 
 def laplacian(Z):
