@@ -11,6 +11,9 @@ I changed the drid to 440 x 82 (0.05cm resolution), which gives Re = 200.
 I changed the grid to 880 x 164 (0.025cm resolution), which gives Re = 400. To get results in a reasonable time, I optimized the code using numbas njit.
 
 
+## Initialization improvements:
+Ramp up the velocity at the inlet using an exponential function to reduce shocks. We also now use a smooth initalization of the velocity field to reduce initial transients.
+
 
 ## Further improvements to reduce noise and increase stability:
 | Category     | Method                              | Effect                                      |

@@ -62,9 +62,10 @@ def main():
         nx=int(220*scaling),
         ny=int(41*scaling),
         u_inlet=0.12,
-        reynolds_number=400,
+        reynolds_number=450,
         n_steps=10000,  # Full run
         vis_interval=200,
+        velocity_ramp_tau=400,
     )
 
     print(f"      Solver configuration:")

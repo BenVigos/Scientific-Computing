@@ -80,6 +80,29 @@ def _outlet_open_kernel(f):
             f[x_out, y, i] = f[x_prev, y, i]
 
 
+def _compute_ramped_velocity(step, u_inlet, tau_ramp):
+    """
+    Compute exponential ramp-up velocity: u(t) = u_inlet * (1 - exp(-t / tau))
+
+    Parameters
+    ----------
+    step : int
+        Current timestep (1-indexed)
+    u_inlet : float
+        Target inlet velocity
+    tau_ramp : float
+        Time constant for ramp-up in timesteps
+
+    Returns
+    -------
+    float
+        Ramped inlet velocity at current step
+    """
+    if tau_ramp <= 0:
+        return u_inlet
+    return u_inlet * (1.0 - np.exp(-float(step) / tau_ramp))
+
+
 @njit(cache=True)
 def _inlet_zou_he_kernel(f, u_inlet):
     _, ny, _ = f.shape
@@ -88,6 +111,26 @@ def _inlet_zou_he_kernel(f, u_inlet):
         f[0, y, 1] = f[0, y, 3] + (2.0 / 3.0) * rho_in * u_inlet
         f[0, y, 5] = f[0, y, 7] - 0.5 * (f[0, y, 2] - f[0, y, 4]) + (1.0 / 6.0) * rho_in * u_inlet
         f[0, y, 8] = f[0, y, 6] + 0.5 * (f[0, y, 2] - f[0, y, 4]) + (1.0 / 6.0) * rho_in * u_inlet
+
+
+@njit(cache=True)
+def _inlet_regularized_kernel(f, u_inlet, c, w):
+    _, ny, _ = f.shape
+    for y in range(ny):
+        rho_in = (f[0, y, 0] + f[0, y, 2] + f[0, y, 4] + 2.0 * (f[0, y, 3] + f[0, y, 6] + f[0, y, 7])) / (1.0 - u_inlet)
+        ux = u_inlet
+        uy = 0.0
+        usqr = ux * ux + uy * uy
+
+        feq = np.empty(9, dtype=np.float64)
+        for i in range(9):
+            cu = c[i, 0] * ux + c[i, 1] * uy
+            feq[i] = w[i] * rho_in * (1.0 + 3.0 * cu + 4.5 * cu * cu - 1.5 * usqr)
+
+        # Reconstruct incoming populations using equilibrium + reflected non-equilibrium.
+        f[0, y, 1] = feq[1] + (f[0, y, 3] - feq[3])
+        f[0, y, 5] = feq[5] + (f[0, y, 7] - feq[7])
+        f[0, y, 8] = feq[8] + (f[0, y, 6] - feq[6])
 
 
 class Solver(ABC):
@@ -140,7 +183,8 @@ class LBMSolver(Solver):
     """
 
     def __init__(self, environment, nx, ny, u_inlet, reynolds_number=150,
-                 n_steps=30000, vis_interval=100):
+                 n_steps=30000, vis_interval=100, velocity_ramp_tau=None,
+                 inlet_bc="zou_he"):
         """
         Initialize the LBM solver.
 
@@ -158,6 +202,15 @@ class LBMSolver(Solver):
             Target Reynolds number (default: 150)
         n_steps : int, optional
             Total number of timesteps (default: 30000)
+        vis_interval : int, optional
+            Visualization update interval in timesteps (default: 100)
+        velocity_ramp_tau : float, optional
+            Time constant (in timesteps) for exponential velocity ramp-up.
+            If None (default), velocity ramps to full speed in about n_steps/10.
+            Smaller values = faster ramp, larger values = slower ramp.
+        inlet_bc : str, optional
+            Inlet boundary condition model. Supported: "zou_he" (default)
+            and "regularized".
         """
         super().__init__(environment)
         self.nx = nx
@@ -166,6 +219,13 @@ class LBMSolver(Solver):
         self.reynolds_number = reynolds_number
         self.n_steps = n_steps
         self.vis_interval = min(vis_interval, n_steps // 10)
+        # Default ramp time constant: 10% of total steps if not specified
+        self.velocity_ramp_tau = velocity_ramp_tau if velocity_ramp_tau is not None else max(100, n_steps // 10)
+
+        inlet_bc_normalized = inlet_bc.lower().replace("-", "_")
+        if inlet_bc_normalized not in ("zou_he", "regularized"):
+            raise ValueError("inlet_bc must be 'zou_he' or 'regularized'.")
+        self.inlet_bc = inlet_bc_normalized
 
         # D2Q9 Lattice velocities
         self.c = np.array([[0, 0],    # 0 - rest
@@ -267,6 +327,12 @@ class LBMSolver(Solver):
         """Apply open outlet boundary condition at x=Nx-1 (zero-gradient)."""
         _outlet_open_kernel(f)
 
+    def _apply_inlet_boundary(self, f, u_inlet):
+        """Apply selected inlet BC model."""
+        if self.inlet_bc == "regularized":
+            _inlet_regularized_kernel(f, u_inlet, self.c, self.w)
+        else:
+            _inlet_zou_he_kernel(f, u_inlet)
 
     def solve(self, verbose=True, visualizer=None, record_video=False, video_filename='lbm_simulation.mp4'):
         """
@@ -296,13 +362,17 @@ class LBMSolver(Solver):
             print(f"Initializing LBM solver...")
             print(f"  Grid: {self.nx} x {self.ny}")
             print(f"  Inlet velocity: {self.u_inlet}")
+            print(f"  Inlet BC: {self.inlet_bc}")
+            print(f"  Velocity ramp time constant: {self.velocity_ramp_tau:.1f} timesteps")
             print(f"  Reynolds number: {self.reynolds_number}")
             print(f"  Relaxation time (tau): {self.tau:.4f}")
             print(f"  Obstacle cells: {np.count_nonzero(self.obstacle)}")
 
         # Initialize macroscopic fields
         rho_init = np.ones((self.nx, self.ny), dtype=np.float64)
-        ux_init = np.full((self.nx, self.ny), self.u_inlet, dtype=np.float64)
+        y = np.arange(self.ny)
+        profile = 4 * self.u_inlet * y / self.ny * (1 - y / self.ny)
+        ux_init = np.tile(profile, (self.nx, 1)) #smooth initial parabolic profile
         uy_init = np.zeros((self.nx, self.ny), dtype=np.float64)
 
         # Add small transverse perturbation to break symmetry
@@ -339,6 +409,9 @@ class LBMSolver(Solver):
             print(f"\nRunning {self.n_steps} timesteps...\n")
 
         for step in range(1, self.n_steps + 1):
+            # Compute ramped inlet velocity for smooth initialization
+            u_inlet_ramped = _compute_ramped_velocity(step, self.u_inlet, self.velocity_ramp_tau)
+
             # 1. Compute macroscopic quantities
             _compute_macroscopic(f, self.c, rho, ux, uy)
 
@@ -354,12 +427,12 @@ class LBMSolver(Solver):
 
             # 5. Boundary conditions
             _outlet_open_kernel(f)
-            _inlet_zou_he_kernel(f, self.u_inlet)
+            self._apply_inlet_boundary(f, u_inlet_ramped)
 
             # Progress and visualization
             if verbose and step % 1000 == 0:
                 avg_rho = np.mean(rho[~self.obstacle])
-                print(f"  Step {step:>6d}/{self.n_steps}  |  avg density = {avg_rho:.6f}")
+                print(f"  Step {step:>6d}/{self.n_steps}  |  avg density = {avg_rho:.6f}  |  u_inlet_ramped = {u_inlet_ramped:.6f}")
 
             if sim_visualizer is not None and step % self.vis_interval == 0:
                 field = visualizer.compute_field(ux, uy, rho)
@@ -382,6 +455,7 @@ class LBMSolver(Solver):
                 'nx': self.nx,
                 'ny': self.ny,
                 'u_inlet': self.u_inlet,
+                'inlet_bc': self.inlet_bc,
                 'reynolds_number': self.reynolds_number,
                 'tau': self.tau,
                 'n_steps': self.n_steps
