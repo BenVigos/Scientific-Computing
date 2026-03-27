@@ -55,14 +55,16 @@ def main():
     # =========================================================================
     print("\n[2/4] Running LBM simulation with live velocity visualization...")
 
+    scaling =4.0
     # Create solver with realistic parameters
     solver = LBMSolver(
         environment=env,
-        nx=300,
-        ny=120,
+        nx=int(220*scaling),
+        ny=int(41*scaling),
         u_inlet=0.12,
-        reynolds_number=150,
-        n_steps=10000  # Full run
+        reynolds_number=400,
+        n_steps=10000,  # Full run
+        vis_interval=200,
     )
 
     print(f"      Solver configuration:")

@@ -1,5 +1,94 @@
 from abc import ABC, abstractmethod
 import numpy as np
+from numba import njit
+
+
+@njit(cache=True)
+def _compute_macroscopic(f, c, rho, ux, uy):
+    nx, ny, _ = f.shape
+    for x in range(nx):
+        for y in range(ny):
+            rho_xy = 0.0
+            ux_xy = 0.0
+            uy_xy = 0.0
+            for i in range(9):
+                fi = f[x, y, i]
+                rho_xy += fi
+                ux_xy += fi * c[i, 0]
+                uy_xy += fi * c[i, 1]
+            rho[x, y] = rho_xy
+            if rho_xy > 0.0:
+                ux[x, y] = ux_xy / rho_xy
+                uy[x, y] = uy_xy / rho_xy
+            else:
+                ux[x, y] = 0.0
+                uy[x, y] = 0.0
+
+
+@njit(cache=True)
+def _equilibrium_kernel(rho, ux, uy, c, w, feq):
+    nx, ny = rho.shape
+    for x in range(nx):
+        for y in range(ny):
+            rho_xy = rho[x, y]
+            ux_xy = ux[x, y]
+            uy_xy = uy[x, y]
+            usqr = ux_xy * ux_xy + uy_xy * uy_xy
+            for i in range(9):
+                cu = c[i, 0] * ux_xy + c[i, 1] * uy_xy
+                feq[x, y, i] = w[i] * rho_xy * (1.0 + 3.0 * cu + 4.5 * cu * cu - 1.5 * usqr)
+
+
+@njit(cache=True)
+def _collide_kernel(f, feq, tau, f_out):
+    nx, ny, _ = f.shape
+    inv_tau = 1.0 / tau
+    for x in range(nx):
+        for y in range(ny):
+            for i in range(9):
+                f_out[x, y, i] = f[x, y, i] - (f[x, y, i] - feq[x, y, i]) * inv_tau
+
+
+@njit(cache=True)
+def _bounce_back_kernel(f, f_out, obstacle, opp):
+    nx, ny = obstacle.shape
+    for x in range(nx):
+        for y in range(ny):
+            if obstacle[x, y]:
+                for i in range(9):
+                    f_out[x, y, i] = f[x, y, opp[i]]
+
+
+@njit(cache=True)
+def _stream_kernel(f_out, c, f):
+    nx, ny, _ = f.shape
+    for x in range(nx):
+        for y in range(ny):
+            for i in range(9):
+                sx = (x - c[i, 0]) % nx
+                sy = (y - c[i, 1]) % ny
+                f[x, y, i] = f_out[sx, sy, i]
+
+
+@njit(cache=True)
+def _outlet_open_kernel(f):
+    nx, ny, _ = f.shape
+    x_out = nx - 1
+    x_prev = nx - 2
+    for y in range(ny):
+        for i in range(9):
+            f[x_out, y, i] = f[x_prev, y, i]
+
+
+@njit(cache=True)
+def _inlet_zou_he_kernel(f, u_inlet):
+    _, ny, _ = f.shape
+    for y in range(ny):
+        rho_in = (f[0, y, 0] + f[0, y, 2] + f[0, y, 4] + 2.0 * (f[0, y, 3] + f[0, y, 6] + f[0, y, 7])) / (1.0 - u_inlet)
+        f[0, y, 1] = f[0, y, 3] + (2.0 / 3.0) * rho_in * u_inlet
+        f[0, y, 5] = f[0, y, 7] - 0.5 * (f[0, y, 2] - f[0, y, 4]) + (1.0 / 6.0) * rho_in * u_inlet
+        f[0, y, 8] = f[0, y, 6] + 0.5 * (f[0, y, 2] - f[0, y, 4]) + (1.0 / 6.0) * rho_in * u_inlet
+
 
 class Solver(ABC):
     """Abstract base class for PDE solvers"""
@@ -51,7 +140,7 @@ class LBMSolver(Solver):
     """
 
     def __init__(self, environment, nx, ny, u_inlet, reynolds_number=150,
-                 n_steps=30000):
+                 n_steps=30000, vis_interval=100):
         """
         Initialize the LBM solver.
 
@@ -76,6 +165,7 @@ class LBMSolver(Solver):
         self.u_inlet = u_inlet
         self.reynolds_number = reynolds_number
         self.n_steps = n_steps
+        self.vis_interval = min(vis_interval, n_steps // 10)
 
         # D2Q9 Lattice velocities
         self.c = np.array([[0, 0],    # 0 - rest
@@ -86,15 +176,15 @@ class LBMSolver(Solver):
                            [1, 1],    # 5 - north-east
                            [-1, 1],   # 6 - north-west
                            [-1, -1],  # 7 - south-west
-                           [1, -1]])  # 8 - south-east
+                           [1, -1]], dtype=np.int32)  # 8 - south-east
 
         # D2Q9 weights
         self.w = np.array([4/9,                        # rest
                            1/9, 1/9, 1/9, 1/9,         # axis-aligned
-                           1/36, 1/36, 1/36, 1/36])    # diagonals
+                           1/36, 1/36, 1/36, 1/36], dtype=np.float64)    # diagonals
 
         # Opposite direction index for bounce-back
-        self.opp = np.array([0, 3, 4, 1, 2, 7, 8, 5, 6])
+        self.opp = np.array([0, 3, 4, 1, 2, 7, 8, 5, 6], dtype=np.int32)
 
         # Setup obstacle from environment
         self._setup_obstacle()
@@ -150,13 +240,8 @@ class LBMSolver(Solver):
         f_i^eq = w_i * rho * (1 + 3*(c_i·u)/cs² + 4.5*(c_i·u)²/cs⁴ - 1.5*u²/cs²)
         where cs² = 1/3
         """
-        feq = np.zeros((self.nx, self.ny, 9))
-        usqr = ux**2 + uy**2
-
-        for i in range(9):
-            cu = self.c[i, 0] * ux + self.c[i, 1] * uy
-            feq[:, :, i] = (self.w[i] * rho *
-                           (1.0 + 3.0 * cu + 4.5 * cu**2 - 1.5 * usqr))
+        feq = np.zeros((self.nx, self.ny, 9), dtype=np.float64)
+        _equilibrium_kernel(rho, ux, uy, self.c, self.w, feq)
         return feq
 
     def _inlet_zou_he(self, f, rho):
@@ -180,7 +265,7 @@ class LBMSolver(Solver):
 
     def _outlet_open(self, f):
         """Apply open outlet boundary condition at x=Nx-1 (zero-gradient)."""
-        f[-1, :, :] = f[-2, :, :]
+        _outlet_open_kernel(f)
 
 
     def solve(self, verbose=True, visualizer=None, record_video=False, video_filename='lbm_simulation.mp4'):
@@ -216,9 +301,9 @@ class LBMSolver(Solver):
             print(f"  Obstacle cells: {np.count_nonzero(self.obstacle)}")
 
         # Initialize macroscopic fields
-        rho_init = np.ones((self.nx, self.ny))
-        ux_init = np.full((self.nx, self.ny), self.u_inlet)
-        uy_init = np.zeros((self.nx, self.ny))
+        rho_init = np.ones((self.nx, self.ny), dtype=np.float64)
+        ux_init = np.full((self.nx, self.ny), self.u_inlet, dtype=np.float64)
+        uy_init = np.zeros((self.nx, self.ny), dtype=np.float64)
 
         # Add small transverse perturbation to break symmetry
         y = np.arange(self.ny)
@@ -230,6 +315,13 @@ class LBMSolver(Solver):
 
         # Initialize distributions to equilibrium
         f = self._equilibrium(rho_init, ux_init, uy_init)
+
+        # Preallocate arrays reused in each timestep to reduce memory churn.
+        rho = np.empty((self.nx, self.ny), dtype=np.float64)
+        ux = np.empty((self.nx, self.ny), dtype=np.float64)
+        uy = np.empty((self.nx, self.ny), dtype=np.float64)
+        feq = np.empty((self.nx, self.ny, 9), dtype=np.float64)
+        f_out = np.empty((self.nx, self.ny, 9), dtype=np.float64)
 
         # Setup visualization if requested
         sim_visualizer = None
@@ -248,33 +340,28 @@ class LBMSolver(Solver):
 
         for step in range(1, self.n_steps + 1):
             # 1. Compute macroscopic quantities
-            rho = np.sum(f, axis=2)
-            ux = np.sum(f * self.c[:, 0], axis=2) / rho
-            uy = np.sum(f * self.c[:, 1], axis=2) / rho
+            _compute_macroscopic(f, self.c, rho, ux, uy)
 
             # 2. Collision step (BGK)
-            feq = self._equilibrium(rho, ux, uy)
-            f_out = f - (f - feq) / self.tau
+            _equilibrium_kernel(rho, ux, uy, self.c, self.w, feq)
+            _collide_kernel(f, feq, self.tau, f_out)
 
             # 3. Bounce-back on obstacle (no-slip wall)
-            for i in range(9):
-                f_out[self.obstacle, i] = f[self.obstacle, self.opp[i]]
+            _bounce_back_kernel(f, f_out, self.obstacle, self.opp)
 
             # 4. Streaming step
-            for i in range(9):
-                f[:, :, i] = np.roll(f_out[:, :, i], shift=self.c[i, 0], axis=0)
-                f[:, :, i] = np.roll(f[:, :, i], shift=self.c[i, 1], axis=1)
+            _stream_kernel(f_out, self.c, f)
 
             # 5. Boundary conditions
-            self._outlet_open(f)
-            self._inlet_zou_he(f, rho)
+            _outlet_open_kernel(f)
+            _inlet_zou_he_kernel(f, self.u_inlet)
 
             # Progress and visualization
             if verbose and step % 1000 == 0:
                 avg_rho = np.mean(rho[~self.obstacle])
                 print(f"  Step {step:>6d}/{self.n_steps}  |  avg density = {avg_rho:.6f}")
 
-            if sim_visualizer is not None and step % 100 == 0:
+            if sim_visualizer is not None and step % self.vis_interval == 0:
                 field = visualizer.compute_field(ux, uy, rho)
                 sim_visualizer.update(field, step)
 
