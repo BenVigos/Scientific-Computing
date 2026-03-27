@@ -21,7 +21,7 @@ class Environment(ABC):
 class KarmannVortex(Environment):
     """Karmann Vortex Street Environment"""
 
-    def __init__(self, viscosity=0.01, v0=1.0):
+    def __init__(self, viscosity=0.01, v0=0.12):
         self.viscosity = viscosity
         self.v0 = v0
 
@@ -32,8 +32,8 @@ class KarmannVortex(Environment):
 
     def initial_condition(self, x, y):
         return (
-            np.sin(np.pi * x) * np.sin(np.pi * y),
-            -np.cos(np.pi * x) * np.cos(np.pi * y),
+            self.v0,
+            0.001 * self.v0 * np.sin(2.0 * np.pi * y / self.y_range[1]),
         )
 
     def _region_masks(self, x, y, eps=1e-10):
@@ -72,7 +72,7 @@ class KarmannVortex(Environment):
     def boundary_condition(self, x, y, t, eps=1e-10):
         """
         Mixed BCs:
-        - Left inlet: v = v0 (Dirichlet), du/dn = 0 (Neumann)
+        - Left inlet: u = v0 (Dirichlet), dv/dn = 0 (Neumann)
         - Top/bottom and cylinder: u = v = 0 (Dirichlet no-slip)
         - Right boundary: du/dn = dv/dn = 0 (Neumann outflow)
         """
@@ -85,24 +85,26 @@ class KarmannVortex(Environment):
         left_inlet = masks["left"] & ~masks["wall"]
         right_outlet = masks["right"] & ~masks["obstacle"]
 
-        u_dirichlet_mask = masks["wall"]
-        u_neumann_mask = left_inlet | right_outlet
+        # u is x-velocity: prescribe inlet speed on left, no-slip on walls.
+        u_dirichlet_mask = masks["wall"] | left_inlet
+        u_neumann_mask = right_outlet
 
-        v_dirichlet_mask = masks["wall"] | left_inlet
-        v_neumann_mask = right_outlet
+        # v is y-velocity: no-slip on walls, zero-gradient at inlet/outlet.
+        v_dirichlet_mask = masks["wall"]
+        v_neumann_mask = left_inlet | right_outlet
 
-        v_dirichlet_value = np.where(left_inlet, self.v0, 0.0)
+        u_dirichlet_value = np.where(left_inlet, self.v0, 0.0)
 
         return {
             "u": {
                 "dirichlet_mask": u_dirichlet_mask,
-                "dirichlet_value": zeros,
+                "dirichlet_value": u_dirichlet_value,
                 "neumann_mask": u_neumann_mask,
                 "neumann_value": zeros,
             },
             "v": {
                 "dirichlet_mask": v_dirichlet_mask,
-                "dirichlet_value": v_dirichlet_value,
+                "dirichlet_value": zeros,
                 "neumann_mask": v_neumann_mask,
                 "neumann_value": zeros,
             },
@@ -119,7 +121,7 @@ class KarmannVortex(Environment):
         v_overlap = np.count_nonzero(bc["v"]["dirichlet_mask"] & bc["v"]["neumann_mask"])
 
         left_inlet = masks["left"] & ~masks["wall"]
-        inlet_v_vals = data["v0"][left_inlet]
+        inlet_u_vals = data["u0"][left_inlet]
 
         return {
             "grid": (nx, ny),
@@ -129,8 +131,8 @@ class KarmannVortex(Environment):
             "n_right_outlet": int(np.count_nonzero(bc["v"]["neumann_mask"])),
             "u_dirichlet_neumann_overlap": int(u_overlap),
             "v_dirichlet_neumann_overlap": int(v_overlap),
-            "left_inlet_v_min": float(inlet_v_vals.min()) if inlet_v_vals.size else None,
-            "left_inlet_v_max": float(inlet_v_vals.max()) if inlet_v_vals.size else None,
+            "left_inlet_u_min": float(inlet_u_vals.min()) if inlet_u_vals.size else None,
+            "left_inlet_u_max": float(inlet_u_vals.max()) if inlet_u_vals.size else None,
         }
 
     def build_condition_masks(self, nx, ny, t=0.0):
@@ -208,7 +210,7 @@ class RoomWifi(Environment):
 
 
 def main():
-    env = KarmannVortex(v0=1.0)
+    env = KarmannVortex(v0=0.12)
 
     diagnostics = env.validate_condition_masks(nx=120, ny=60)
     print("Boundary/mask diagnostics:")
@@ -217,7 +219,7 @@ def main():
 
     env.show()
 
-    small = env.build_condition_masks(nx=15, ny=3)
+    small = env.build_condition_masks(nx=60, ny=30)
     print("\nSmall-grid sanity check:")
     print(f"  u0 shape: {small['u0'].shape}")
     print(f"  v0 shape: {small['v0'].shape}")
