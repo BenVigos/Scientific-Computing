@@ -29,7 +29,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from envirmonment import KarmannVortex  # noqa: E402
-from solvers import LBMSolver  # noqa: E402
+from solvers import LBMSolver, FDMSolver, FEMSolver  # noqa: E402
 
 
 @dataclass
@@ -122,6 +122,46 @@ def benchmark_errors(
         "rel_l2_rho": l2_rho / den_rho,
     }
 
+def extract_history_metrics(result: dict[str, Any], method: str) -> dict[str, float]:
+    """Read method-specific diagnostics from solver history."""
+    history = result.get("history", {})
+
+    if method == "fdm":
+        speed_hist = np.asarray(history.get("speed_max", []), dtype=float)
+        div_hist = np.asarray(history.get("div_inf", []), dtype=float)
+        p_hist = np.asarray(history.get("p_max", []), dtype=float)
+        dt_hist = np.asarray(history.get("dt", []), dtype=float)
+
+        return {
+            "max_speed_history": float(np.max(speed_hist)) if speed_hist.size else np.nan,
+            "max_div_history": float(np.max(div_hist)) if div_hist.size else np.nan,
+            "max_p_history": float(np.max(p_hist)) if p_hist.size else np.nan,
+            "dt_min": float(np.min(dt_hist)) if dt_hist.size else np.nan,
+            "dt_max": float(np.max(dt_hist)) if dt_hist.size else np.nan,
+            "dt_final": float(dt_hist[-1]) if dt_hist.size else np.nan,
+        }
+
+    if method == "fem":
+        umax_hist = np.asarray(history.get("u_max_sampled", []), dtype=float)
+        div_hist = np.asarray(history.get("div_l2", []), dtype=float)
+
+        return {
+            "max_speed_history": float(np.max(umax_hist)) if umax_hist.size else np.nan,
+            "max_div_history": float(np.max(div_hist)) if div_hist.size else np.nan,
+            "max_p_history": np.nan,
+            "dt_min": np.nan,
+            "dt_max": np.nan,
+            "dt_final": np.nan,
+        }
+
+    return {
+        "max_speed_history": np.nan,
+        "max_div_history": np.nan,
+        "max_p_history": np.nan,
+        "dt_min": np.nan,
+        "dt_max": np.nan,
+        "dt_final": np.nan,
+    }
 
 def apply_bc_once(u: np.ndarray, v: np.ndarray, bc: dict[str, Any], masks: dict[str, np.ndarray]) -> None:
     u[bc["u"]["dirichlet_mask"]] = bc["u"]["dirichlet_value"][bc["u"]["dirichlet_mask"]]
@@ -141,87 +181,13 @@ def apply_bc_once(u: np.ndarray, v: np.ndarray, bc: dict[str, Any], masks: dict[
     v[masks["obstacle"]] = 0.0
 
 
-def run_fdm_proxy(env: KarmannVortex, cfg: dict[str, Any]) -> dict[str, Any]:
-    nx = int(cfg["nx"])
-    ny = int(cfg["ny"])
-    n_iter = int(cfg["n_iter"])
-    dt = float(cfg["dt"])
-    nu = float(cfg["nu"])
+def run_fdm(env: KarmannVortex, cfg: dict[str, Any]) -> dict[str, Any]:
+   solver = FDMSolver(environment=env, **cfg)
+    return solver.solve(verbose=False)
 
-    cm = env.build_condition_masks(nx=nx, ny=ny, t=0.0)
-    u = cm["u0"].copy()
-    v = cm["v0"].copy()
-    bc = cm["bc"]
-    masks = cm["masks"]
-
-    dx2 = cm["dx"] * cm["dx"]
-    dy2 = cm["dy"] * cm["dy"]
-
-    fluid = masks["fluid"] & (~masks["boundary"])
-    rho = np.ones((nx, ny), dtype=np.float64)
-
-    for _ in range(n_iter):
-        u_old = u.copy()
-        v_old = v.copy()
-
-        lap_u = (
-            (np.roll(u_old, -1, axis=0) - 2.0 * u_old + np.roll(u_old, 1, axis=0)) / dx2
-            + (np.roll(u_old, -1, axis=1) - 2.0 * u_old + np.roll(u_old, 1, axis=1)) / dy2
-        )
-        lap_v = (
-            (np.roll(v_old, -1, axis=0) - 2.0 * v_old + np.roll(v_old, 1, axis=0)) / dx2
-            + (np.roll(v_old, -1, axis=1) - 2.0 * v_old + np.roll(v_old, 1, axis=1)) / dy2
-        )
-
-        u[fluid] = u_old[fluid] + dt * nu * lap_u[fluid]
-        v[fluid] = v_old[fluid] + dt * nu * lap_v[fluid]
-
-        apply_bc_once(u, v, bc, masks)
-
-    return {"ux": u, "uy": v, "rho": rho, "obstacle": masks["obstacle"]}
-
-
-def run_fem_proxy(env: KarmannVortex, cfg: dict[str, Any]) -> dict[str, Any]:
-    nx = int(cfg["nx"])
-    ny = int(cfg["ny"])
-    n_iter = int(cfg["n_iter"])
-    omega = float(cfg["omega"])
-
-    cm = env.build_condition_masks(nx=nx, ny=ny, t=0.0)
-    u = cm["u0"].copy()
-    v = cm["v0"].copy()
-    bc = cm["bc"]
-    masks = cm["masks"]
-
-    interior = masks["fluid"] & (~masks["boundary"])
-    rho = np.ones((nx, ny), dtype=np.float64)
-
-    for _ in range(n_iter):
-        u_new = u.copy()
-        v_new = v.copy()
-
-        avg_u = 0.25 * (
-            np.roll(u, 1, axis=0)
-            + np.roll(u, -1, axis=0)
-            + np.roll(u, 1, axis=1)
-            + np.roll(u, -1, axis=1)
-        )
-        avg_v = 0.25 * (
-            np.roll(v, 1, axis=0)
-            + np.roll(v, -1, axis=0)
-            + np.roll(v, 1, axis=1)
-            + np.roll(v, -1, axis=1)
-        )
-
-        u_new[interior] = (1.0 - omega) * u[interior] + omega * avg_u[interior]
-        v_new[interior] = (1.0 - omega) * v[interior] + omega * avg_v[interior]
-
-        u = u_new
-        v = v_new
-        apply_bc_once(u, v, bc, masks)
-
-    return {"ux": u, "uy": v, "rho": rho, "obstacle": masks["obstacle"]}
-
+def run_fem(env: KarmannVortex, cfg: dict[str, Any]) -> dict[str, Any]:
+    solver = FEMSolver(environment=env, **cfg)
+    return solver.solve(verbose=False)
 
 def run_lbm(env: KarmannVortex, cfg: dict[str, Any]) -> dict[str, Any]:
     solver = LBMSolver(environment=env, **cfg)
@@ -256,20 +222,45 @@ def make_sweeps(nx: int, ny: int, n_steps: int, u_inlet: float) -> list[SweepSpe
         SweepSpec(
             method="fdm",
             grid={
-                "nx": [nx],
-                "ny": [ny],
-                "n_iter": [1200, 2000],
-                "dt": [0.03, 0.05],
-                "nu": [0.002, 0.004],
+                "nx": [config["fdm_base_nx"]],
+                "ny": [config["fdm_base_ny"]],
+                "dt": [config["fdm_base_dt"]],
+                "n_steps": [config["fdm_base_n_steps"]],
+                "rho": [1.0],
+                "adaptive_dt": [True],
+                "cfl_safety": [0.20],
+                "diff_safety": [0.20],
+                "reynolds_number": [150, 300, 500, 1000],
+                "poisson_method": ["amg"],
+                "pressure_tol": [1e-5],
+                "pressure_maxiter": [300],
+                "use_preconditioner": [True],
+                "convection_order": ["second"],
+                "outlet_bc": ["zero_gradient"],
+                "outlet_convection_speed": [None],
             },
         ),
         SweepSpec(
             method="fem",
             grid={
-                "nx": [nx],
-                "ny": [ny],
-                "n_iter": [1000, 1800],
-                "omega": [0.9, 1.0],
+                "dt": [config["fem_base_dt"]],
+                "n_steps": [config["fem_base_n_steps"]],
+                "global_maxh": [config["fem_base_global_maxh"]],
+                "cyl_maxh": [config["fem_base_cyl_maxh"]],
+                "order": [2],
+                "reynolds_number": [150, 300, 500, 1000],
+                "rho": [1.0],
+                "graddiv_gamma": [1e-3],
+                "inlet_profile": ["parabolic"],
+                "inlet_perturbation": [1e-3],
+                "ramp_time": [0.0],
+                "stokes_start": [True],
+                "curved_order": [3],
+                "probe_point": [(0.6, 0.21)],
+                "num_threads": [config["fem_num_threads"]],
+                "inverse_name": ["umfpack"],
+                "export_nx": [config["fem_export_nx"]],
+                "export_ny": [config["fem_export_ny"]],
             },
         ),
     ]
@@ -402,8 +393,8 @@ def run_analysis(config: dict[str, Any]) -> None:
 
     runners: dict[str, Callable[[KarmannVortex, dict[str, Any]], dict[str, Any]]] = {
         "lbm": run_lbm,
-        "fdm": run_fdm_proxy,
-        "fem": run_fem_proxy,
+        "fdm": run_fdm,
+        "fem": run_fem
     }
 
     run_rows: list[dict[str, Any]] = []
@@ -508,6 +499,26 @@ def build_run_config() -> dict[str, Any]:
         "test_ny": 120,
         "test_steps": 4000,
 
+        # FDM 
+        "fdm_base_nx": 301,
+        "fdm_base_ny": 120,
+        "fdm_base_dt": 5e-4,
+        "fdm_base_n_steps": 4000,
+        "fdm_dt_n_steps": 4000,
+        "fdm_mesh_n_steps": 4000,
+
+        # FEM 
+        "fem_base_dt": 1e-3,
+        "fem_base_n_steps": 4000,
+        "fem_dt_n_steps": 4000,
+        "fem_mesh_n_steps": 4000,
+        "fem_base_global_maxh": 0.02,
+        "fem_base_cyl_maxh": 0.0025,
+        "fem_export_nx": 301,
+        "fem_export_ny": 121,
+        "fem_num_threads": 8,
+
+
         # Quick mode for fast sanity checks
         "quick_mode": True,
     }
@@ -519,6 +530,21 @@ def build_run_config() -> dict[str, Any]:
         config["test_nx"] = 80
         config["test_ny"] = 32
         config["test_steps"] = 180
+        
+        config["fdm_base_nx"] = 151
+        config["fdm_base_ny"] = 60
+        config["fdm_base_dt"] = 1e-3
+        config["fdm_base_n_steps"] = 800
+        config["fdm_dt_n_steps"] = 800
+        config["fdm_mesh_n_steps"] = 800
+
+        config["fem_base_dt"] = 2e-3
+        config["fem_base_n_steps"] = 600
+        config["fem_dt_n_steps"] = 600
+        config["fem_mesh_n_steps"] = 600
+        config["fem_export_nx"] = 151
+        config["fem_export_ny"] = 61
+        config["fem_num_threads"] = 4
 
     return config
 
