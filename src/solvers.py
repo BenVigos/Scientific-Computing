@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
 import numpy as np
+from scipy.sparse import lil_matrix, csr_matrix
+from scipy.sparse.linalg import bicgstab, cg, spilu, LinearOperator
 from numba import njit, prange
 
 try:
