@@ -28,7 +28,13 @@ Although, it is very close to breaking.
 
 ## Magical changes:
 After some magical changes, it now reaches Re = 850. No idea why or how. I tried to add trt functionality, which didn't work well, but after trying bgk again it works better
+after changing some more stuff, It now goes to Re = 550
 
+## Added damping at outlet:
+Not much changed in performance. 
+
+## Changing initial conditions:
+I changed initial velocity to be non zero only for the first 10% of points, and got Re = 700
 
 ## Further improvements to reduce noise and increase stability:
 | Category     | Method                              | Effect                                      |

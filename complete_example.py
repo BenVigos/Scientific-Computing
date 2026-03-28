@@ -56,21 +56,24 @@ def main():
     # =========================================================================
     print("\n[2/4] Running LBM simulation with live velocity visualization...")
 
-    scaling =4.0
+    scaling =5
     # Create solver with realistic parameters
     solver = LBMSolver(
         environment=env,
         nx=int(220*scaling),
         ny=int(41*scaling),
         u_inlet=0.12,
-        reynolds_number=850,
+        reynolds_number=750,
         n_steps=10000,  # Full run
-        vis_interval=200,
-        velocity_ramp_tau=400,
+        vis_interval=500,
+        velocity_ramp_tau=1000,
         inlet_bc = 'regularized',
-        alpha = 1.0,
+        outlet_bc = "open",
+        alpha = 0.995,
         collision_model='bgk',
-        bc_ramp_tau=1e8,
+        bc_ramp_tau=1000,
+        outlet_sponge_width=100*scaling/4,
+        outlet_sponge_sigma_max=0.3,
     )
 
     print(f"      Solver configuration:")

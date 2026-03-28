@@ -50,48 +50,44 @@ def _collide_kernel(f, feq, tau, f_out, alpha):
                 fi = f[x, y, i]
                 feq_i = feq[x, y, i]
 
-                # BGK collision (compute non-equilibrium part)
-                fneq = fi - feq_i
-                f_post = fi - fneq * inv_tau   # standard BGK
-
-                # Apply non-equilibrium damping
-                fneq_post = f_post - feq_i
-                f_out[x, y, i] = feq_i + alpha * fneq_post
+                f_post = fi - (fi - feq_i) * inv_tau
+                f_out[x, y, i] = feq_i + alpha * (f_post - feq_i)
 
 
 @njit(cache=True)
-def _collide_trt_kernel(f, feq, tau_plus, tau_minus, opp, f_out, alpha):
+def _collide_trt_kernel(f, feq, tau_plus, tau_minus, opp, f_out):
     nx, ny, _ = f.shape
     omega_plus = 1.0 / tau_plus
     omega_minus = 1.0 / tau_minus
 
     for x in range(nx):
         for y in range(ny):
-            # Rest direction (self-opposite) uses symmetric rate only
+
+            # Rest population
             fi = f[x, y, 0]
             feq_i = feq[x, y, 0]
-            fneq = fi - feq_i
-            f_out[x, y, 0] = feq_i + alpha * (fi - omega_plus * fneq - feq_i)
+            f_out[x, y, 0] = fi - omega_plus * (fi - feq_i)
 
-            # Handle pairs once (i < opp[i])
             for i in range(1, 9):
                 io = opp[i]
                 if i < io:
                     fi = f[x, y, i]
                     fio = f[x, y, io]
+
                     feq_i = feq[x, y, i]
                     feq_io = feq[x, y, io]
 
                     f_plus = 0.5 * (fi + fio)
                     f_minus = 0.5 * (fi - fio)
+
                     feq_plus = 0.5 * (feq_i + feq_io)
                     feq_minus = 0.5 * (feq_i - feq_io)
 
-                    fp = f_plus - omega_plus * (f_plus - feq_plus)
-                    fm = f_minus - omega_minus * (f_minus - feq_minus)
+                    f_plus_new = f_plus - omega_plus * (f_plus - feq_plus)
+                    f_minus_new = f_minus - omega_minus * (f_minus - feq_minus)
 
-                    f_out[x, y, i] = feq_i + alpha * (fp + fm - feq_i)
-                    f_out[x, y, io] = feq_io + alpha * (fp - fm - feq_io)
+                    f_out[x, y, i]  = f_plus_new + f_minus_new
+                    f_out[x, y, io] = f_plus_new - f_minus_new
 
 
 @njit(cache=True)
@@ -126,6 +122,7 @@ def _stream_kernel(f_out, c, f):
 
 @njit(cache=True)
 def _outlet_open_kernel(f):
+    """Zero-gradient outlet (copy from previous layer)."""
     nx, ny, _ = f.shape
     x_out = nx - 1
     x_prev = nx - 2
@@ -134,41 +131,82 @@ def _outlet_open_kernel(f):
             f[x_out, y, i] = f[x_prev, y, i]
 
 
+@njit(cache=True)
+def _outlet_hybrid_kernel(f, c, w, rho_target):
+    nx, ny, _ = f.shape
+    x = nx - 1
+    x_prev = nx - 2
+
+    for y in range(ny):
+        # --- extrapolate velocity ---
+        rho_prev = 0.0
+        ux_prev = 0.0
+        uy_prev = 0.0
+
+        for i in range(9):
+            fi = f[x_prev, y, i]
+            rho_prev += fi
+            ux_prev += fi * c[i, 0]
+            uy_prev += fi * c[i, 1]
+
+        ux = ux_prev / rho_prev
+        uy = uy_prev / rho_prev
+
+        # --- enforce pressure ---
+        rho = rho_target
+        usqr = ux * ux + uy * uy
+
+        # equilibrium
+        feq = np.empty(9, dtype=np.float64)
+        for i in range(9):
+            cu = c[i, 0] * ux + c[i, 1] * uy
+            feq[i] = w[i] * rho * (1.0 + 3.0 * cu + 4.5 * cu * cu - 1.5 * usqr)
+
+        # reconstruct incoming populations
+        f[x, y, 3] = feq[3] + (f[x, y, 1] - feq[1])
+        f[x, y, 6] = feq[6] + (f[x, y, 8] - feq[8])
+        f[x, y, 7] = feq[7] + (f[x, y, 5] - feq[5])
+
+
+@njit(cache=True)
+def _apply_outlet_sponge_kernel(f_out, feq, sponge_start_x, sigma_max):
+    """Damp non-equilibrium content near the outlet to reduce reflections."""
+    nx, ny, _ = f_out.shape
+    width = nx - sponge_start_x
+    if width <= 0:
+        return
+
+    for x in range(sponge_start_x, nx):
+        # Smooth ramp from weak damping at sponge start to sigma_max at outlet.
+        xi = (x - sponge_start_x + 1) / width
+        sigma = sigma_max * xi * xi
+        if sigma > 1.0:
+            sigma = 1.0
+        inv = 1.0 - sigma
+
+        for y in range(ny):
+            for i in range(9):
+                f_out[x, y, i] = inv * f_out[x, y, i] + sigma * feq[x, y, i]
+
+
 def _compute_ramped_velocity(step, u_inlet, tau_ramp):
-    """
-    Compute exponential ramp-up velocity: u(t) = u_inlet * (1 - exp(-t / tau))
-
-    Parameters
-    ----------
-    step : int
-        Current timestep (1-indexed)
-    u_inlet : float
-        Target inlet velocity
-    tau_ramp : float
-        Time constant for ramp-up in timesteps
-
-    Returns
-    -------
-    float
-        Ramped inlet velocity at current step
-    """
     if tau_ramp <= 0:
         return u_inlet
     return u_inlet * (1.0 - np.exp(-float(step) / tau_ramp))
 
 
 def _compute_ramped_value(step, target, tau_ramp):
-    """Smooth exponential ramp to target; if tau_ramp<=0 returns target immediately."""
     if tau_ramp is None or tau_ramp <= 0:
         return target
     return target * (1.0 - np.exp(-float(step) / tau_ramp))
 
 
 @njit(cache=True)
-def _inlet_zou_he_kernel(f, u_inlet, c, w, neq_scale):
+def _inlet_zou_he_kernel(f, u_inlet, c, w):
     _, ny, _ = f.shape
     for y in range(ny):
-        rho_in = (f[0, y, 0] + f[0, y, 2] + f[0, y, 4] + 2.0 * (f[0, y, 3] + f[0, y, 6] + f[0, y, 7])) / (1.0 - u_inlet)
+        rho_in = ((f[0, y, 0] + f[0, y, 2] + f[0, y, 4])
+                  + 2.0 * (f[0, y, 3] + f[0, y, 6] + f[0, y, 7])) / (1.0 - u_inlet)
         ux = u_inlet
         uy = 0.0
         usqr = ux * ux + uy * uy
@@ -178,66 +216,46 @@ def _inlet_zou_he_kernel(f, u_inlet, c, w, neq_scale):
             cu = c[i, 0] * ux + c[i, 1] * uy
             feq[i] = w[i] * rho_in * (1.0 + 3.0 * cu + 4.5 * cu * cu - 1.5 * usqr)
 
-        # TRT-consistent non-equilibrium reconstruction for incoming populations.
-        f[0, y, 1] = feq[1] + neq_scale * (f[0, y, 3] - feq[3])
-        f[0, y, 5] = feq[5] + neq_scale * (f[0, y, 7] - feq[7])
-        f[0, y, 8] = feq[8] + neq_scale * (f[0, y, 6] - feq[6])
-
-
+        f[0, y, 1] = feq[1] + (f[0, y, 3] - feq[3])
+        f[0, y, 5] = feq[5] + (f[0, y, 7] - feq[7])
+        f[0, y, 8] = feq[8] + (f[0, y, 6] - feq[6])
 
 
 @njit(cache=True)
-def _inlet_regularized_kernel(f, u_inlet, c, w, neq_scale):
+def _inlet_regularized_kernel(f, u_inlet, c, w):
     _, ny, _ = f.shape
     for y in range(ny):
-        rho_in = f[0, y, 0] + f[0, y, 2] + f[0, y, 4] + 2.0 * (f[0, y, 3] + f[0, y, 6] + f[0, y, 7])
+        rho_in = ((f[0, y, 0] + f[0, y, 2] + f[0, y, 4])
+                  + 2.0 * (f[0, y, 3] + f[0, y, 6] + f[0, y, 7])) / (1.0 - u_inlet)
 
         feq = np.empty(9, dtype=np.float64)
         for i in range(9):
-            cu = c[i, 0] * u_inlet + c[i, 1] * 0.0
-            feq[i] = w[i] * rho_in * (1.0 + 3.0 * cu + 4.5 * cu ** 2 - 1.5 * u_inlet ** 2)
+            cu = c[i, 0] * u_inlet
+            feq[i] = w[i] * rho_in * (1.0 + 3.0 * cu + 4.5 * cu * cu - 1.5 * u_inlet * u_inlet)
 
-        f[0, y, 1] = feq[1] + neq_scale*(f[0, y, 3] - feq[3])
-        f[0, y, 5] = feq[5] + neq_scale*(f[0, y, 7] - feq[7])
-        f[0, y, 8] = feq[8] + neq_scale*(f[0, y, 6] - feq[6])
+        f[0, y, 1] = feq[1] + (f[0, y, 3] - feq[3])
+        f[0, y, 5] = feq[5] + (f[0, y, 7] - feq[7])
+        f[0, y, 8] = feq[8] + (f[0, y, 6] - feq[6])
 
 
 @njit(cache=True)
-def _bottom_bounce_back_wall_kernel(f, w, neq_scale):
+def _bottom_bounce_back_wall_kernel(f):
     nx, _, _ = f.shape
     y = 0
     for x in range(nx):
-        rho = f[x, y, 0] + f[x, y, 1] + f[x, y, 3] + 2.0 * (f[x, y, 4] + f[x, y, 7] + f[x, y, 8])
-
-        feq2 = w[2] * rho
-        feq4 = w[4] * rho
-        feq5 = w[5] * rho
-        feq7 = w[7] * rho
-        feq6 = w[6] * rho
-        feq8 = w[8] * rho
-
-        f[x, y, 2] = feq2 + neq_scale * (f[x, y, 4] - feq4)
-        f[x, y, 5] = feq5 + neq_scale * (f[x, y, 7] - feq7)
-        f[x, y, 6] = feq6 + neq_scale * (f[x, y, 8] - feq8)
+        f[x, y, 2] = f[x, y, 4]
+        f[x, y, 5] = f[x, y, 7]
+        f[x, y, 6] = f[x, y, 8]
 
 
 @njit(cache=True)
-def _top_bounce_back_wall_kernel(f, w, neq_scale):
+def _top_bounce_back_wall_kernel(f):
     nx, ny, _ = f.shape
     y = ny - 1
     for x in range(nx):
-        rho = f[x, y, 0] + f[x, y, 1] + f[x, y, 3] + 2.0 * (f[x, y, 2] + f[x, y, 5] + f[x, y, 6])
-
-        feq2 = w[2] * rho
-        feq4 = w[4] * rho
-        feq5 = w[5] * rho
-        feq7 = w[7] * rho
-        feq6 = w[6] * rho
-        feq8 = w[8] * rho
-
-        f[x, y, 4] = feq4 + neq_scale * (f[x, y, 2] - feq2)
-        f[x, y, 7] = feq7 + neq_scale * (f[x, y, 5] - feq5)
-        f[x, y, 8] = feq8 + neq_scale * (f[x, y, 6] - feq6)
+        f[x, y, 4] = f[x, y, 2]
+        f[x, y, 7] = f[x, y, 5]
+        f[x, y, 8] = f[x, y, 6]
 
 
 class Solver(ABC):
@@ -291,9 +309,11 @@ class LBMSolver(Solver):
 
     def __init__(self, environment, nx, ny, u_inlet, reynolds_number=150,
                  n_steps=30000, vis_interval=100, velocity_ramp_tau=None,
-                 inlet_bc="zou_he", top_bc="bounce_back", bottom_bc="bounce_back", alpha=1.0,
+                 inlet_bc="zou_he", outlet_bc="open",
+                 top_bc="bounce_back", bottom_bc="bounce_back", alpha=1.0,
                  collision_model="bgk", tau_minus=None, trt_lambda=0.25,
-                 bc_ramp_tau=None):
+                 bc_ramp_tau=None, use_outlet_sponge=False,
+                 outlet_sponge_width=0, outlet_sponge_sigma_max=0.15):
         """
         Initialize the LBM solver.
 
@@ -320,6 +340,9 @@ class LBMSolver(Solver):
         inlet_bc : str, optional
             Inlet boundary condition model. Supported: "zou_he" (default)
             and "regularized".
+        outlet_bc : str, optional
+            Outlet boundary condition. Supported: "open" (zero-gradient, default)
+            and "zou_he_pressure" (Zou-He pressure outlet).
         top_bc : str, optional
             Top boundary condition. Supported: "bounce_back" (default)
             or "periodic".
@@ -334,6 +357,13 @@ class LBMSolver(Solver):
         trt_lambda : float, optional
             TRT magic parameter such that
             (tau_plus - 0.5) * (tau_minus - 0.5) = trt_lambda.
+        use_outlet_sponge : bool, optional
+            Enable sponge damping layer near the outlet boundary.
+        outlet_sponge_width : int, optional
+            Width of sponge layer in lattice cells from the outlet.
+            Set to 0 to disable unless use_outlet_sponge=True.
+        outlet_sponge_sigma_max : float, optional
+            Maximum sponge blending factor at outlet edge (0 to 1).
         """
         super().__init__(environment)
         self.nx = nx
@@ -352,10 +382,19 @@ class LBMSolver(Solver):
         # Optional separate ramp for boundary non-equilibrium scaling; defaults to velocity ramp
         self.bc_ramp_tau = bc_ramp_tau if bc_ramp_tau is not None else self.velocity_ramp_tau
 
+        self.use_outlet_sponge = bool(use_outlet_sponge)
+        self.outlet_sponge_width = int(outlet_sponge_width)
+        self.outlet_sponge_sigma_max = float(outlet_sponge_sigma_max)
+
         inlet_bc_normalized = inlet_bc.lower().replace("-", "_")
         if inlet_bc_normalized not in ("zou_he", "regularized"):
             raise ValueError("inlet_bc must be 'zou_he' or 'regularized'.")
         self.inlet_bc = inlet_bc_normalized
+
+        outlet_bc_normalized = outlet_bc.lower().replace("-", "_")
+        if outlet_bc_normalized not in ("open", "zou_he_pressure"):
+            raise ValueError("outlet_bc must be 'open' or 'zou_he_pressure'.")
+        self.outlet_bc = outlet_bc_normalized
 
         # Keep backward compatibility: old wall modes map to bounce-back walls.
         # Periodic wraparound is disabled with bounded streaming.
@@ -372,6 +411,22 @@ class LBMSolver(Solver):
             raise ValueError("top_bc must be 'bounce_back'.")
         if self.bottom_bc not in allowed_wall_bcs:
             raise ValueError("bottom_bc must be 'bounce_back'.")
+
+        if self.outlet_sponge_width < 0:
+            raise ValueError("outlet_sponge_width must be >= 0.")
+        if not (0.0 <= self.outlet_sponge_sigma_max <= 1.0):
+            raise ValueError("outlet_sponge_sigma_max must be in [0, 1].")
+
+        # Auto-enable sponge if width is specified.
+        if self.outlet_sponge_width > 0:
+            self.use_outlet_sponge = True
+
+        if self.use_outlet_sponge and self.outlet_sponge_width == 0:
+            raise ValueError("Set outlet_sponge_width > 0 when use_outlet_sponge=True.")
+        if self.outlet_sponge_width >= self.nx:
+            raise ValueError("outlet_sponge_width must be smaller than nx.")
+
+        self.outlet_sponge_start_x = self.nx - self.outlet_sponge_width if self.use_outlet_sponge else self.nx
 
         # D2Q9 Lattice velocities
         self.c = np.array([[0, 0],    # 0 - rest
@@ -499,17 +554,24 @@ class LBMSolver(Solver):
     def _apply_inlet_boundary(self, f, u_inlet):
         """Apply selected inlet BC model."""
         if self.inlet_bc == "regularized":
-            _inlet_regularized_kernel(f, u_inlet, self.c, self.w, self.neq_reflection_scale)
+            _inlet_regularized_kernel(f, u_inlet, self.c, self.w)
         else:
-            _inlet_zou_he_kernel(f, u_inlet, self.c, self.w, self.neq_reflection_scale)
+            _inlet_zou_he_kernel(f, u_inlet, self.c, self.w)
 
-    def _apply_top_bottom_boundaries(self, f, bc_neq_scale):
+    def _apply_outlet_boundary(self, f, rho_target=1.0):
+        """Apply selected outlet BC model."""
+        if self.outlet_bc == "zou_he_pressure":
+            _outlet_hybrid_kernel(f, self.c, self.w, rho_target)
+        else:
+            _outlet_open_kernel(f)
+
+    def _apply_top_bottom_boundaries(self, f):
         """Apply selected top and bottom wall BC models."""
         if self.top_bc == "bounce_back":
-            _top_bounce_back_wall_kernel(f, self.w, bc_neq_scale)
+            _top_bounce_back_wall_kernel(f)
 
         if self.bottom_bc == "bounce_back":
-            _bottom_bounce_back_wall_kernel(f, self.w, bc_neq_scale)
+            _bottom_bounce_back_wall_kernel(f)
 
     def solve(self, verbose=True, visualizer=None, record_video=False, video_filename='lbm_simulation.mp4'):
         """
@@ -540,6 +602,7 @@ class LBMSolver(Solver):
             print(f"  Grid: {self.nx} x {self.ny}")
             print(f"  Inlet velocity: {self.u_inlet}")
             print(f"  Inlet BC: {self.inlet_bc}")
+            print(f"  Outlet BC: {self.outlet_bc}")
             print(f"  Top BC: {self.top_bc}")
             print(f"  Bottom BC: {self.bottom_bc}")
             print(f"  Collision model: {self.collision_model}")
@@ -551,17 +614,25 @@ class LBMSolver(Solver):
             print(f"  Reynolds number: {self.reynolds_number}")
             print(f"  Relaxation time (tau): {self.tau:.4f}")
             print(f"  Obstacle cells: {np.count_nonzero(self.obstacle)}")
+            print(f"  Outlet sponge enabled: {self.use_outlet_sponge}")
+            if self.use_outlet_sponge:
+                print(f"  Outlet sponge width: {self.outlet_sponge_width}")
+                print(f"  Outlet sponge sigma_max: {self.outlet_sponge_sigma_max:.3f}")
 
         # Initialize macroscopic fields
         rho_init = np.ones((self.nx, self.ny), dtype=np.float64)
         y = np.arange(self.ny)
         profile = 4 * self.u_inlet * y / self.ny * (1 - y / self.ny)
-        ux_init = np.tile(profile, (self.nx, 1)) #smooth initial parabolic profile
+
+        # Only apply non-zero velocity in the first 5% of x grid points (inlet region)
+        x_inlet_end = max(1, int(0.091 * self.nx))
+        ux_init = np.zeros((self.nx, self.ny), dtype=np.float64)
+        ux_init[:x_inlet_end, :] = np.tile(profile, (x_inlet_end, 1))
         uy_init = np.zeros((self.nx, self.ny), dtype=np.float64)
 
-        # Add small transverse perturbation to break symmetry
+        # Add small transverse perturbation to break symmetry (only in inlet region)
         y = np.arange(self.ny)
-        uy_init += 0.001 * self.u_inlet * np.sin(2.0 * np.pi * y / self.ny)
+        uy_init[:x_inlet_end, :] += 0.001 * self.u_inlet * np.sin(2.0 * np.pi * y / self.ny)
 
         # Zero velocity in obstacle
         ux_init[self.obstacle] = 0.0
@@ -607,23 +678,35 @@ class LBMSolver(Solver):
             # 2. Collision step
             _equilibrium_kernel(rho, ux, uy, self.c, self.w, feq)
             if self.collision_model == "trt":
-                _collide_trt_kernel(f, feq, self.tau, self.tau_minus, self.opp, f_out, self.alpha)
+                _collide_trt_kernel(f, feq, self.tau, self.tau_minus, self.opp, f_out)
             else:
                 _collide_kernel(f, feq, self.tau, f_out, self.alpha)
 
             # 3. Bounce-back on obstacle (no-slip wall)
             _bounce_back_kernel(f, f_out, self.obstacle, self.opp)
 
+            # Optional sponge layer near outlet to absorb outgoing disturbances.
+            if self.use_outlet_sponge:
+                _apply_outlet_sponge_kernel(
+                    f_out,
+                    feq,
+                    self.outlet_sponge_start_x,
+                    self.outlet_sponge_sigma_max,
+                )
+
             # 4. Streaming step
             _stream_kernel(f_out, self.c, f)
 
             # 5. Boundary conditions
-            _outlet_open_kernel(f)
+            # 5. Boundary conditions
+            self._apply_outlet_boundary(f)
+
             if self.inlet_bc == "regularized":
-                _inlet_regularized_kernel(f, u_inlet_ramped, self.c, self.w, bc_neq_scale)
+                _inlet_regularized_kernel(f, u_inlet_ramped, self.c, self.w)
             else:
-                _inlet_zou_he_kernel(f, u_inlet_ramped, self.c, self.w, bc_neq_scale)
-            self._apply_top_bottom_boundaries(f, bc_neq_scale)
+                _inlet_zou_he_kernel(f, u_inlet_ramped, self.c, self.w)
+
+            self._apply_top_bottom_boundaries(f)
 
             # Progress and visualization
             if verbose and step % 1000 == 0:
@@ -652,6 +735,7 @@ class LBMSolver(Solver):
                 'ny': self.ny,
                 'u_inlet': self.u_inlet,
                 'inlet_bc': self.inlet_bc,
+                'outlet_bc': self.outlet_bc,
                 'top_bc': self.top_bc,
                 'bottom_bc': self.bottom_bc,
                 'collision_model': self.collision_model,
@@ -659,6 +743,9 @@ class LBMSolver(Solver):
                 'trt_lambda': self.trt_lambda,
                 'neq_reflection_scale': self.neq_reflection_scale,
                 'bc_ramp_tau': self.bc_ramp_tau,
+                'use_outlet_sponge': self.use_outlet_sponge,
+                'outlet_sponge_width': self.outlet_sponge_width,
+                'outlet_sponge_sigma_max': self.outlet_sponge_sigma_max,
                 'reynolds_number': self.reynolds_number,
                 'tau': self.tau,
                 'n_steps': self.n_steps
