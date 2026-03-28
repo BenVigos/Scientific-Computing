@@ -51,7 +51,7 @@ def main():
     export_ny = 120
 
     record_video = False
-    visualize_every = 500
+    # visualize_every = 500
     video_filename = os.path.join(output_dir, "fem_simulation.mp4")
 
     # ------------------------------------------------------------------
@@ -111,10 +111,10 @@ def main():
 
     result = solver.solve(
         verbose=True,
-        visualizer=live_visualizer,
-        record_video=record_video,
-        video_filename=video_filename,
-        visualize_every=visualize_every,
+        # visualizer=live_visualizer,
+        # record_video=record_video,
+        # video_filename=video_filename,
+        # visualize_every=visualize_every,
         return_history=True,
         export_nx=export_nx,
         export_ny=export_ny,

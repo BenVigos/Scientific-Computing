@@ -493,8 +493,7 @@ class FEMSolver(Solver):
             return 0.0
         if time >= self.ramp_time:
             return 1.0
-        s = time / self.ramp_time
-        return 0.5 * (1.0 - np.cos(np.pi * s))
+        return 1.0 - np.exp(-time / self.ramp_time)
 
     def _inlet_cf(self, time=None, full_strength=False):
         """
@@ -911,6 +910,10 @@ class FDMSolver(Solver):
         convection_order="second",
         outlet_bc="zero_gradient",
         outlet_convection_speed=None,
+        inlet_profile="parabolic",
+        inlet_perturbation=1e-3,
+        velocity_ramp_tau=None,
+        inlet_strip_fraction=0.091,
     ):
         """
         Initialize the finite-difference solver.
@@ -975,6 +978,16 @@ class FDMSolver(Solver):
         self.use_preconditioner = bool(use_preconditioner)
         self.ilu_drop_tol = float(ilu_drop_tol)
         self.ilu_fill_factor = float(ilu_fill_factor)
+        self.inlet_profile = str(inlet_profile).lower()
+        self.inlet_perturbation = float(inlet_perturbation)
+        self.velocity_ramp_tau = (
+            float(velocity_ramp_tau)
+            if velocity_ramp_tau is not None
+            else max(100.0 * self.dt, 0.1)
+        )
+        self.inlet_strip_fraction = float(inlet_strip_fraction)
+        
+        
 
         self.convection_order = str(convection_order).lower()
         if self.convection_order not in ("first", "second"):
@@ -1058,6 +1071,37 @@ class FDMSolver(Solver):
         self._apply_velocity_bc(self.u, self.v, dt=self.dt)
         self._apply_pressure_bc(self.p)
 
+    
+    def _ramped_inlet_speed(self, time):
+        if self.velocity_ramp_tau is None or self.velocity_ramp_tau <= 0.0:
+            return self.environment.v0
+        return self.environment.v0 * (1.0 - np.exp(-time / self.velocity_ramp_tau))
+
+
+    def _inlet_profile_values(self, time):
+        """
+        LBM-style inlet:
+        - parabolic or plug ux
+        - small sinusoidal uy perturbation
+        - exponential ramp in time
+        """
+        U = self._ramped_inlet_speed(time)
+
+        y0, y1 = self.environment.y_range
+        H = y1 - y0
+        yy = self.y - y0
+
+        if self.inlet_profile == "parabolic":
+            ux = 4.0 * U * yy * (H - yy) / (H * H)
+        elif self.inlet_profile == "plug":
+            ux = np.full_like(self.y, U, dtype=float)
+        else:
+            raise ValueError("inlet_profile must be 'parabolic' or 'plug'.")
+
+        uy = self.inlet_perturbation * U * np.sin(2.0 * np.pi * yy / H)
+        return ux, uy
+    
+    
     # INDEXING / MATRIX ASSEMBLY
 
     def _build_pressure_indexing(self):
@@ -1400,32 +1444,34 @@ class FDMSolver(Solver):
         return max_div
 
     # HELPERS
-
     def _apply_velocity_bc(self, u, v, dt=None):
         """
-        Apply environment-defined mixed velocity BCs in-place.
-
-        Current interpretation:
-            - u Dirichlet at wall + inlet
-            - v Dirichlet at wall
-            - zero-gradient for v at inlet
-            - outlet either zero-gradient or convective
-            - obstacle forced to no-slip
+        Apply velocity BCs with LBM-like inlet behavior:
+        - ramped parabolic or plug inflow
+        - small transverse perturbation
+        - no-slip walls and obstacle
+        - zero-gradient or convective outlet
         """
         if dt is None:
             dt = self.dt
 
-        bc = self.bc
         masks = self.masks
+        bc = self.bc
 
-        # Dirichlet masks from environment
-        u[bc["u"]["dirichlet_mask"]] = bc["u"]["dirichlet_value"][bc["u"]["dirichlet_mask"]]
-        v[bc["v"]["dirichlet_mask"]] = bc["v"]["dirichlet_value"][bc["v"]["dirichlet_mask"]]
+        # First apply environment wall BCs only
+        wall_mask = masks["wall"]
+        u[wall_mask] = 0.0
+        v[wall_mask] = 0.0
 
-        # Left inlet: v zero-gradient
+        # LBM-like inlet at next time
+        t_bc = self.time + dt
+        ux_in, uy_in = self._inlet_profile_values(t_bc)
+
         left_inlet = masks["left"] & ~masks["wall"]
         if np.any(left_inlet):
-            v[0, left_inlet[0, :]] = v[1, left_inlet[0, :]]
+            inlet_rows = left_inlet[0, :]
+            u[0, inlet_rows] = ux_in[inlet_rows]
+            v[0, inlet_rows] = uy_in[inlet_rows]
 
         # Right outlet
         right_outlet = masks["right"] & ~masks["obstacle"]
@@ -1449,9 +1495,11 @@ class FDMSolver(Solver):
                 u[-1, mask] = u[-1, mask] - alpha * (u[-1, mask] - u[-2, mask])
                 v[-1, mask] = v[-1, mask] - alpha * (v[-1, mask] - v[-2, mask])
 
-        # Obstacle: no-slip
+        # Obstacle no-slip
         u[masks["obstacle"]] = 0.0
         v[masks["obstacle"]] = 0.0
+
+   
 
     def _apply_pressure_bc(self, p):
         """
@@ -1769,6 +1817,10 @@ class FDMSolver(Solver):
                 "pressure_unknowns": self.n_pressure_unknowns,
                 "pyamg_available": HAVE_PYAMG,
                 "convection_order": self.convection_order,
+                "inlet_profile": self.inlet_profile,
+                "inlet_perturbation": self.inlet_perturbation,
+                "velocity_ramp_tau": self.velocity_ramp_tau,
+                "inlet_strip_fraction": self.inlet_strip_fraction,
                 "outlet_bc": self.outlet_bc,
                 "outlet_convection_speed": (
                     float(self.outlet_convection_speed)
