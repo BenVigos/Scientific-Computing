@@ -1,6 +1,20 @@
 from abc import ABC, abstractmethod
 import numpy as np
-from numba import njit
+from numba import njit, prange
+
+try:
+    import pyamg
+    HAVE_PYAMG = True
+except Exception:
+    HAVE_PYAMG = False
+
+try:
+    import ngsolve as ngs
+    from ngsolve import *
+    from netgen.geom2d import SplineGeometry
+    _NGSOLVE_AVAILABLE = True
+except ImportError:
+    _NGSOLVE_AVAILABLE = False
 
 
 @njit(cache=True)
@@ -257,6 +271,43 @@ def _top_bounce_back_wall_kernel(f):
         f[x, y, 7] = f[x, y, 5]
         f[x, y, 8] = f[x, y, 6]
 
+def _build_karman_geometry(env, global_maxh=0.08, cyl_maxh=0.02):
+    """
+    Build a fitted 2D channel-with-cylinder geometry for Netgen/NGSolve.
+
+    Boundary names:
+        inlet    : left boundary
+        outlet   : right boundary
+        wall     : top and bottom walls
+        cylinder : cylinder surface
+    """
+    geo = SplineGeometry()
+
+    x0, x1 = env.x_range
+    y0, y1 = env.y_range
+    cx, cy = env.circle_center
+    r = env.circle_radius
+
+    p0 = geo.AppendPoint(x0, y0)
+    p1 = geo.AppendPoint(x1, y0)
+    p2 = geo.AppendPoint(x1, y1)
+    p3 = geo.AppendPoint(x0, y1)
+
+    geo.Append(["line", p0, p1], bc="wall",   leftdomain=1, rightdomain=0, maxh=global_maxh)
+    geo.Append(["line", p1, p2], bc="outlet", leftdomain=1, rightdomain=0, maxh=global_maxh)
+    geo.Append(["line", p2, p3], bc="wall",   leftdomain=1, rightdomain=0, maxh=global_maxh)
+    geo.Append(["line", p3, p0], bc="inlet",  leftdomain=1, rightdomain=0, maxh=global_maxh)
+
+    geo.AddCircle(
+        c=(cx, cy),
+        r=r,
+        bc="cylinder",
+        leftdomain=0,
+        rightdomain=1,
+        maxh=cyl_maxh,
+    )
+
+    return geo
 
 class Solver(ABC):
     """Abstract base class for PDE solvers"""
@@ -268,30 +319,1467 @@ class Solver(ABC):
     def solve(self):
         pass
 
+
 class FEMSolver(Solver):
-    """Finite Element Method Solver"""
+    """
+    Finite-Element incompressible Navier–Stokes solver using NGSolve.
 
-    def __init__(self, environment, mesh, material):
+    - Taylor–Hood Pk/P(k-1)
+    - IMEX Euler:
+          implicit: mass + diffusion + incompressibility (+ optional grad-div)
+          explicit: convection
+    - Constant implicit matrix assembled once
+    - One inverse reused across all time steps
+    - Curved mesh for the cylinder
+    - Optional Stokes initialization
+    """
+
+    def __init__(
+        self,
+        environment,
+        dt=1e-3,
+        n_steps=8000,
+        global_maxh=0.025,
+        cyl_maxh=0.003,
+        order=2,
+        reynolds_number=None,
+        viscosity=None,
+        rho=1.0,
+        graddiv_gamma=1e-3,
+        inlet_profile="parabolic",
+        inlet_perturbation=1e-3,
+        ramp_time=0.0,
+        stokes_start=True,
+        curved_order=None,
+        probe_point=(0.6, 0.21),
+        num_threads=None,
+        inverse_name="umfpack",
+        verbose=True,
+    ):
+        if not _NGSOLVE_AVAILABLE:
+            raise ImportError("NGSolve is not installed. Install it before using FEMSolver.")
+
         super().__init__(environment)
-        self.mesh = mesh
-        self.material = material
 
-    def solve(self):
-        print("Solving using FEM Solver...")
-        return "FEM Solution"
+        self.environment = environment
+        self.dt = float(dt)
+        self.n_steps = int(n_steps)
+        self.global_maxh = float(global_maxh)
+        self.cyl_maxh = float(cyl_maxh)
+        self.order = int(order)
+        self.rho = float(rho)
+        self.graddiv_gamma = float(graddiv_gamma)
+        self.inlet_profile = str(inlet_profile).lower()
+        self.inlet_perturbation = float(inlet_perturbation)
+        self.ramp_time = float(ramp_time)
+        self.stokes_start = bool(stokes_start)
+        self.curved_order = int(curved_order if curved_order is not None else max(2, order))
+        self.probe_point = tuple(probe_point)
+        self.num_threads = num_threads
+        self.inverse_name = str(inverse_name)
+        self.verbose = bool(verbose)
+
+        self.v0 = float(environment.v0)
+
+        diameter = 2.0 * environment.circle_radius
+        if reynolds_number is not None:
+            if reynolds_number <= 0:
+                raise ValueError("reynolds_number must be positive.")
+            self.reynolds_number = float(reynolds_number)
+            self.nu = self.v0 * diameter / self.reynolds_number
+            print(self.nu)
+        elif viscosity is not None:
+            if viscosity <= 0:
+                raise ValueError("viscosity must be positive.")
+            self.nu = float(viscosity)
+            self.reynolds_number = self.v0 * diameter / self.nu
+        else:
+            self.nu = float(environment.viscosity)
+            self.reynolds_number = self.v0 * diameter / max(self.nu, 1e-12)
+
+        self.time = 0.0
+
+        if self.num_threads is not None:
+            ngs.SetNumThreads(int(self.num_threads))
+
+        self._build_mesh()
+        self._build_spaces()
+        self._setup_gridfunctions()
+        self._build_implicit_operator()
+        self._setup_initial_condition()
+
+
+    # Mesh 
+
+    def _build_mesh(self):
+        if self.verbose:
+            print("  Building FEM mesh...")
+
+        geo = _build_karman_geometry(
+            self.environment,
+            global_maxh=self.global_maxh,
+            cyl_maxh=self.cyl_maxh,
+        )
+
+        with ngs.TaskManager():
+            ngmesh = geo.GenerateMesh(maxh=self.global_maxh)
+
+        self.mesh = Mesh(ngmesh)
+        self.mesh.Curve(self.curved_order)
+
+        if self.verbose:
+            print(f"    Elements: {self.mesh.ne}, Vertices: {self.mesh.nv}, Curve order: {self.curved_order}")
+
+    def _build_spaces(self):
+        if self.order < 2:
+            raise ValueError("Taylor–Hood needs order >= 2")
+
+        dirichlet_velocity = "inlet|wall|cylinder"
+
+        self.V = VectorH1(self.mesh, order=self.order, dirichlet=dirichlet_velocity)
+        self.Q = H1(self.mesh, order=self.order - 1)
+        self.X = FESpace([self.V, self.Q])
+
+        (self.u, self.p), (self.v, self.q) = self.X.TnT()
+
+        self.freedofs = self.X.FreeDofs()
+
+        # pin one pressure dof
+        prange = self.X.Range(1)
+        self.pressure_pin_dof = None
+        for dof in range(prange.start, prange.stop):
+            if self.freedofs[dof]:
+                self.freedofs[dof] = False
+                self.pressure_pin_dof = dof
+                break
+
+        if self.pressure_pin_dof is None:
+            raise RuntimeError("Could not find a free pressure dof to pin.")
+
+        if self.verbose:
+            print(f"  Velocity DOFs : {self.V.ndof}")
+            print(f"  Pressure DOFs : {self.Q.ndof}")
+            print(f"  Mixed DOFs    : {self.X.ndof}")
+            print(f"  Pinned pressure dof: {self.pressure_pin_dof}")
+
+    def _setup_gridfunctions(self):
+        # current mixed solution
+        self.gfu = GridFunction(self.X)
+        self.gfu_u, self.gfu_p = self.gfu.components
+
+        # previous velocity only
+        self.gfu_prev = GridFunction(self.V)
+
+        # mixed lifting for inhomogeneous Dirichlet data
+        self.gfd = GridFunction(self.X)
+        self.gfd_u, self.gfd_p = self.gfd.components
+
+        # temporary vectors/forms
+        self.rhs = LinearForm(self.X)
+        self.conv = LinearForm(self.X)
+
+    
+    # Inlet 
+
+
+    def _ramp_factor(self, time=None):
+        if time is None:
+            time = self.time
+        if self.ramp_time <= 0.0:
+            return 1.0
+        if time <= 0.0:
+            return 0.0
+        if time >= self.ramp_time:
+            return 1.0
+        s = time / self.ramp_time
+        return 0.5 * (1.0 - np.cos(np.pi * s))
+
+    def _inlet_cf(self, time=None, full_strength=False):
+        """
+        Inlet profile on the left boundary.
+        """
+        if time is None:
+            time = self.time
+
+        ramp = 1.0 if full_strength else self._ramp_factor(time)
+
+        y0, y1 = self.environment.y_range
+        H = y1 - y0
+        yy = ngs.y - y0
+
+        if self.inlet_profile == "parabolic":
+            ux_base = 4.0 * self.v0 * yy * (H - yy) / (H * H)
+        elif self.inlet_profile == "plug":
+            ux_base = self.v0
+        else:
+            raise ValueError("inlet_profile must be 'parabolic' or 'plug'")
+
+        ux = ramp * ux_base
+
+        if self.inlet_perturbation != 0.0:
+            uy = ramp * self.inlet_perturbation * self.v0 * ngs.sin(2.0 * ngs.pi * yy / H)
+        else:
+            uy = 0.0
+
+        return CoefficientFunction((ux, uy))
+
+    def _assemble_lifting(self, time_for_bc):
+        """
+        Fill self.gfd with the current inhomogeneous velocity Dirichlet data.
+        """
+        self.gfd.vec[:] = 0.0
+        self.gfd_u.Set(CoefficientFunction((0.0, 0.0)), definedon=self.mesh.Boundaries("wall|cylinder"))
+        self.gfd_u.Set(self._inlet_cf(time=time_for_bc), definedon=self.mesh.Boundaries("inlet"))
+        self.gfd_p.vec[:] = 0.0
+
+   
+    # Implicit operator
+
+    def _build_implicit_operator(self):
+        """
+        Build A* for IMEX:
+            (1/dt) M + nu K + saddle + grad-div
+        This matrix is constant and reused every step.
+        """
+        self.astar = BilinearForm(self.X, symmetric=False)
+
+        self.astar += (self.rho / self.dt) * InnerProduct(self.u, self.v) * dx
+        self.astar += self.nu * InnerProduct(grad(self.u), grad(self.v)) * dx
+        self.astar += -self.p * div(self.v) * dx
+        self.astar += div(self.u) * self.q * dx
+
+        if self.graddiv_gamma > 0.0:
+            self.astar += self.graddiv_gamma * div(self.u) * div(self.v) * dx
+
+        with ngs.TaskManager():
+            self.astar.Assemble()
+
+        if self.verbose:
+            print("  Building constant implicit inverse...")
+
+        # factorize once
+        self.inv_astar = self.astar.mat.Inverse(
+            freedofs=self.freedofs,
+            inverse=self.inverse_name,
+        )
+
+  
+    # Initialization
+    def _solve_stokes_initial_state(self):
+        """
+        Solve a steady Stokes problem with full inlet profile.
+        Used only if stokes_start=True and ramp_time == 0.
+        """
+        a0 = BilinearForm(self.X, symmetric=False)
+        a0 += self.nu * InnerProduct(grad(self.u), grad(self.v)) * dx
+        a0 += -self.p * div(self.v) * dx
+        a0 += div(self.u) * self.q * dx
+
+        if self.graddiv_gamma > 0.0:
+            a0 += self.graddiv_gamma * div(self.u) * div(self.v) * dx
+
+        f0 = LinearForm(self.X)
+
+        self.gfd.vec[:] = 0.0
+        self.gfd_u.Set(CoefficientFunction((0.0, 0.0)), definedon=self.mesh.Boundaries("wall|cylinder"))
+        self.gfd_u.Set(self._inlet_cf(full_strength=True), definedon=self.mesh.Boundaries("inlet"))
+        self.gfd_p.vec[:] = 0.0
+
+        with ngs.TaskManager():
+            a0.Assemble()
+            f0.Assemble()
+
+        f0.vec.data -= a0.mat * self.gfd.vec
+
+        sol = GridFunction(self.X)
+        sol.vec.data = a0.mat.Inverse(
+            freedofs=self.freedofs,
+            inverse=self.inverse_name,
+        ) * f0.vec
+        sol.vec.data += self.gfd.vec
+        sol.vec[self.pressure_pin_dof] = 0.0
+
+        self.gfu.vec.data = sol.vec
+        self.gfu_prev.vec.data = self.gfu_u.vec
+
+    def _setup_initial_condition(self):
+        """
+        Recommended:
+        - if ramp_time == 0 and stokes_start=True: steady Stokes start
+        - otherwise: zero start and let ramp introduce flow smoothly
+        """
+        self.gfu.vec[:] = 0.0
+        self.gfu_prev.vec[:] = 0.0
+
+        if self.stokes_start and self.ramp_time <= 0.0:
+            if self.verbose:
+                print("  Computing Stokes initial condition...")
+            self._solve_stokes_initial_state()
+        else:
+            # zero start is consistent with ramped inflow
+            self.gfu.vec[:] = 0.0
+            self.gfu_prev.vec[:] = 0.0
+            self.gfu_p.vec[:] = 0.0
+
+    # Time step
+    def _assemble_rhs(self):
+        """
+        IMEX RHS:
+            (rho/dt) (u^n, v) - rho * ((u^n · ∇)u^n, v)
+        Then subtract A* g_D^{n+1} for inhomogeneous Dirichlet lifting.
+        """
+        self.rhs = LinearForm(self.X)
+        self.rhs += (self.rho / self.dt) * InnerProduct(self.gfu_prev, self.v) * dx
+
+        # explicit convection
+        self.rhs += -self.rho * InnerProduct(grad(self.gfu_prev) * self.gfu_prev, self.v) * dx
+
+        with ngs.TaskManager():
+            self.rhs.Assemble()
+
+        # next-step boundary data
+        self._assemble_lifting(time_for_bc=self.time + self.dt)
+
+        self.rhs.vec.data -= self.astar.mat * self.gfd.vec
+
+    def _single_step(self):
+        self._assemble_rhs()
+
+        sol = GridFunction(self.X)
+        sol.vec.data = self.inv_astar * self.rhs.vec
+        sol.vec.data += self.gfd.vec
+        sol.vec[self.pressure_pin_dof] = 0.0
+
+        self.gfu.vec.data = sol.vec
+        self.gfu_prev.vec.data = self.gfu_u.vec
+        self.time += self.dt
+
+    # ------------------------------------------------------------------
+    # Diagnostics
+    # ------------------------------------------------------------------
+
+    def _sample_point_velocity(self, x, y):
+        try:
+            mip = self.mesh(x, y)
+            val = self.gfu_u(mip)
+            return float(val[0]), float(val[1])
+        except Exception:
+            return np.nan, np.nan
+
+    def _cheap_diagnostics(self):
+        """
+        Cheap FE-native diagnostics.
+        Avoid dense Cartesian export except when needed for visualization/final output.
+        """
+        div_l2 = float(np.sqrt(ngs.Integrate(div(self.gfu_u) * div(self.gfu_u) * dx, self.mesh)))
+        probe_ux, probe_uy = self._sample_point_velocity(*self.probe_point)
+
+        return {
+            "time": self.time,
+            "div_l2": div_l2,
+            "probe_ux": probe_ux,
+            "probe_uy": probe_uy,
+        }
+
+
+    def _to_structured_grid(self, nx, ny):
+        x_lin = np.linspace(*self.environment.x_range, nx)
+        y_lin = np.linspace(*self.environment.y_range, ny)
+        X, Y = np.meshgrid(x_lin, y_lin, indexing="ij")
+
+        ux = np.full((nx, ny), np.nan)
+        uy = np.full((nx, ny), np.nan)
+        p = np.full((nx, ny), np.nan)
+
+        cx, cy = self.environment.circle_center
+        r = self.environment.circle_radius
+        obstacle = (X - cx) ** 2 + (Y - cy) ** 2 <= r ** 2
+
+        ptsx = X[~obstacle].ravel()
+        ptsy = Y[~obstacle].ravel()
+
+        if ptsx.size > 0:
+            mip = self.mesh(ptsx, ptsy)
+            vel = self.gfu_u(mip)
+            ux_vals = np.array(vel[:, 0]).ravel()
+            uy_vals = np.array(vel[:, 1]).ravel()
+            p_vals = np.array(self.gfu_p(mip)).ravel()
+
+            fluid_idx = np.where((~obstacle).ravel())[0]
+            ux.ravel()[fluid_idx] = ux_vals
+            uy.ravel()[fluid_idx] = uy_vals
+            p.ravel()[fluid_idx] = p_vals
+
+        return ux, uy, p, obstacle
+
+    # SOlve
+
+    def solve(
+        self,
+        verbose=None,
+        visualizer=None,
+        record_video=False,
+        video_filename="fem_simulation.mp4",
+        visualize_every=100,
+        history_every=100,
+        return_history=True,
+        export_nx=301,
+        export_ny=121,
+    ):
+        if verbose is not None:
+            self.verbose = bool(verbose)
+
+        if self.verbose:
+            print("=" * 68)
+            print(f"FEM Solver - NGSolve IMEX Taylor–Hood P{self.order}/P{self.order-1}")
+            print("=" * 68)
+            print(f"  Mesh elements     : {self.mesh.ne}")
+            print(f"  Velocity DOFs     : {self.V.ndof}")
+            print(f"  Pressure DOFs     : {self.Q.ndof}")
+            print(f"  dt                : {self.dt:.4e}")
+            print(f"  n_steps           : {self.n_steps}")
+            print(f"  nu                : {self.nu:.6e}")
+            print(f"  Reynolds number   : {self.reynolds_number:.3f}")
+            print(f"  Linear solver     : {self.inverse_name}")
+            print(f"  Inlet profile     : {self.inlet_profile}")
+            print(f"  Inlet perturb.    : {self.inlet_perturbation}")
+            print(f"  Ramp time         : {self.ramp_time}")
+            print(f"  Stokes start      : {self.stokes_start}")
+            print(f"  Grad-div gamma    : {self.graddiv_gamma}")
+            print(f"  Probe point       : {self.probe_point}")
+            print(f"  Threads           : {self.num_threads}")
+            print()
+
+        sim_visualizer = None
+        if visualizer is not None:
+            from visualization import SimulationVisualizer
+
+            ux0, uy0, _, obstacle0 = self._to_structured_grid(export_nx, export_ny)
+            sim_visualizer = SimulationVisualizer(
+                export_nx,
+                export_ny,
+                obstacle0,
+                fps=30,
+                record_video=record_video,
+                video_filename=video_filename,
+            )
+            sim_visualizer.setup(visualizer)
+
+        history = {
+            "time": [],
+            "div_l2": [],
+            "probe_ux": [],
+            "probe_uy": [],
+            "u_max_sampled": [],
+        }
+
+        last_u_max_sampled = np.nan
+
+        for step in range(1, self.n_steps + 1):
+            self._single_step()
+
+            do_history = return_history and (step % history_every == 0 or step == 1 or step == self.n_steps)
+            do_visual = sim_visualizer is not None and (step % visualize_every == 0)
+            do_print = self.verbose and (step % history_every == 0 or step == 1 or step == self.n_steps)
+
+            if do_visual:
+                ux, uy, p, _ = self._to_structured_grid(export_nx, export_ny)
+                field = visualizer.compute_field(ux, uy, p)
+                sim_visualizer.update(field, step)
+
+                speed = np.sqrt(ux**2 + uy**2)
+                last_u_max_sampled = float(np.nanmax(speed))
+
+            if do_history or do_print:
+                diag = self._cheap_diagnostics()
+
+                if np.isnan(last_u_max_sampled):
+                    # only sample a smaller grid occasionally if we have not visualized recently
+                    ux_s, uy_s, _, _ = self._to_structured_grid(min(export_nx, 151), min(export_ny, 61))
+                    speed_s = np.sqrt(ux_s**2 + uy_s**2)
+                    last_u_max_sampled = float(np.nanmax(speed_s))
+
+                if do_history:
+                    history["time"].append(diag["time"])
+                    history["div_l2"].append(diag["div_l2"])
+                    history["probe_ux"].append(diag["probe_ux"])
+                    history["probe_uy"].append(diag["probe_uy"])
+                    history["u_max_sampled"].append(last_u_max_sampled)
+
+                if do_print:
+                    print(
+                        f"step={step:6d}/{self.n_steps}  "
+                        f"t={diag['time']:.5f}  "
+                        f"|u|max~={last_u_max_sampled:.4f}  "
+                        f"||div u||_L2={diag['div_l2']:.3e}  "
+                        f"probe_uy={diag['probe_uy']:.4e}"
+                    )
+
+                last_u_max_sampled = np.nan
+
+        if sim_visualizer is not None:
+            sim_visualizer.finalize()
+
+        ux, uy, p, obstacle = self._to_structured_grid(export_nx, export_ny)
+
+        result = {
+            "ux": ux,
+            "uy": uy,
+            "p": p,
+            "obstacle": obstacle,
+            "fluid": ~obstacle,
+            "metadata": {
+                "nx": export_nx,
+                "ny": export_ny,
+                "mesh_elements": self.mesh.ne,
+                "velocity_dofs": self.V.ndof,
+                "pressure_dofs": self.Q.ndof,
+                "dt": self.dt,
+                "n_steps": self.n_steps,
+                "time_final": self.time,
+                "nu": self.nu,
+                "rho": self.rho,
+                "u_inlet": self.v0,
+                "reynolds_number": self.reynolds_number,
+                "element_type": f"Taylor-Hood P{self.order}/P{self.order-1}",
+                "time_scheme": "IMEX Euler (explicit convection, implicit Stokes part)",
+                "pressure_nullspace_fix": f"pressure dof {self.pressure_pin_dof} pinned",
+                "linear_solver": self.inverse_name,
+                "global_maxh": self.global_maxh,
+                "cyl_maxh": self.cyl_maxh,
+                "curved_order": self.curved_order,
+                "inlet_profile": self.inlet_profile,
+                "inlet_perturbation": self.inlet_perturbation,
+                "ramp_time": self.ramp_time,
+                "stokes_start": self.stokes_start,
+                "graddiv_gamma": self.graddiv_gamma,
+                "probe_point": self.probe_point,
+                "history_every": history_every,
+                "visualize_every": visualize_every,
+            },
+        }
+
+        if return_history:
+            result["history"] = history
+
+        return result
 
 
 class FDMSolver(Solver):
-    """Finite Difference Method Solver"""
+    """
+    Finite-Difference incompressible Navier–Stokes solver on a Cartesian grid.
 
-    def __init__(self, environment, grid, time_step):
+    This version uses a standard pressure-projection structure:
+        1. Build tentative velocity field (u*, v*) without pressure correction
+        2. Solve pressure Poisson equation: -Δp = -(rho/dt) div(u*)
+        3. Correct velocity with the pressure gradient
+        4. Re-apply boundary conditions
+
+    Pressure solve options:
+        - "bicgstab" : BiCGSTAB sparse Krylov solve
+        - "cg"       : Conjugate Gradient (use only if matrix behaves SPD)
+        - "amg"      : Algebraic multigrid via pyamg (if installed)
+
+    The solver can be controlled either by:
+        - explicit viscosity viscosity=...
+        - target Reynolds number reynolds_number=...
+    If both are omitted, it falls back to environment.viscosity.
+
+    """
+
+    def __init__(
+        self,
+        environment,
+        nx=301,
+        ny=121,
+        dt=1e-4,
+        n_steps=5000,
+        rho=1.0,
+        adaptive_dt=True,
+        cfl_safety=0.20,
+        diff_safety=0.20,
+        reynolds_number=None,
+        viscosity=None,
+        poisson_method="bicgstab",
+        pressure_tol=1e-8,
+        pressure_maxiter=400,
+        use_preconditioner=True,
+        ilu_drop_tol=1e-4,
+        ilu_fill_factor=10.0,
+        convection_order="second",
+        outlet_bc="zero_gradient",
+        outlet_convection_speed=None,
+    ):
+        """
+        Initialize the finite-difference solver.
+
+        Parameters
+        ----------
+        environment : Environment
+            Problem definition, expected to provide build_condition_masks().
+        nx, ny : int
+            Number of grid points in x and y.
+        dt : float
+            Maximum time step. If adaptive_dt=True, the actual step is capped by
+            CFL and diffusive stability limits.
+        n_steps : int
+            Number of outer timesteps.
+        rho : float
+            Fluid density.
+        adaptive_dt : bool
+            Whether to adapt dt based on current velocity magnitude.
+        cfl_safety : float
+            Safety factor for convective CFL.
+        diff_safety : float
+            Safety factor for explicit diffusion stability.
+        reynolds_number : float or None
+            Target Reynolds number. If provided, overrides viscosity.
+        viscosity : float or None
+            Explicit viscosity override. Used only if reynolds_number is None.
+        poisson_method : {"bicgstab", "cg", "amg"}
+            Sparse pressure solver to use.
+        pressure_tol : float
+            Relative tolerance passed to the sparse pressure solve.
+        pressure_maxiter : int
+            Maximum iterations for the sparse pressure solve.
+        use_preconditioner : bool
+            Whether to build/use an ILU preconditioner for bicgstab/cg.
+        ilu_drop_tol : float
+            ILU drop tolerance.
+        ilu_fill_factor : float
+            ILU fill factor.
+        convection_order : {"first", "second"}
+            Upwind order used in convection term.
+            "second" uses second-order upwind with first-order fallback.
+        outlet_bc : {"zero_gradient", "convective"}
+            Velocity outlet boundary condition.
+        outlet_convection_speed : float or None
+            Convection speed used when outlet_bc="convective".
+            If None, uses environment.v0.
+        """
         super().__init__(environment)
-        self.grid = grid
-        self.time_step = time_step
 
-    def solve(self):
-        print("Solving using FDM Solver...")
-        return "FDM Solution"
+        self.nx = int(nx)
+        self.ny = int(ny)
+        self.dt = float(dt)
+        self.n_steps = int(n_steps)
+        self.rho = float(rho)
+        self.adaptive_dt = bool(adaptive_dt)
+        self.cfl_safety = float(cfl_safety)
+        self.diff_safety = float(diff_safety)
+        self.poisson_method = str(poisson_method).lower()
+        self.pressure_tol = float(pressure_tol)
+        self.pressure_maxiter = int(pressure_maxiter)
+        self.use_preconditioner = bool(use_preconditioner)
+        self.ilu_drop_tol = float(ilu_drop_tol)
+        self.ilu_fill_factor = float(ilu_fill_factor)
+
+        self.convection_order = str(convection_order).lower()
+        if self.convection_order not in ("first", "second"):
+            raise ValueError("convection_order must be 'first' or 'second'.")
+
+        self.outlet_bc = str(outlet_bc).lower()
+        if self.outlet_bc not in ("zero_gradient", "convective"):
+            raise ValueError("outlet_bc must be 'zero_gradient' or 'convective'.")
+
+        self.outlet_convection_speed = outlet_convection_speed
+
+        # Grid, masks, initial conditions
+        data = self.environment.build_condition_masks(nx=self.nx, ny=self.ny, t=0.0)
+
+        self.x = data["x"]
+        self.y = data["y"]
+        self.X = data["X"]
+        self.Y = data["Y"]
+        self.dx = float(data["dx"])
+        self.dy = float(data["dy"])
+
+        self.bc = data["bc"]
+        self.masks = data["masks"]
+
+        self.u = data["u0"].copy()
+        self.v = data["v0"].copy()
+
+        # Tentative velocities
+        self.ut = np.zeros_like(self.u)
+        self.vt = np.zeros_like(self.v)
+
+        # Pressure and RHS
+        self.p = np.zeros_like(self.u)
+        self.b_full = np.zeros_like(self.u)
+
+        self.time = 0.0
+
+        # Reynolds number / viscosity handling
+        diameter = 2.0 * self.environment.circle_radius
+        inlet_speed = float(self.environment.v0)
+
+        if reynolds_number is not None:
+            if reynolds_number <= 0:
+                raise ValueError("reynolds_number must be positive.")
+            self.reynolds_number = float(reynolds_number)
+            self.nu = inlet_speed * diameter / self.reynolds_number
+        elif viscosity is not None:
+            if viscosity <= 0:
+                raise ValueError("viscosity must be positive.")
+            self.nu = float(viscosity)
+            self.reynolds_number = inlet_speed * diameter / self.nu
+        else:
+            self.nu = float(self.environment.viscosity)
+            self.reynolds_number = inlet_speed * diameter / max(self.nu, 1e-12)
+
+        # Pressure unknown mapping and sparse operator
+        (
+            self.active_pressure_mask,
+            self.dirichlet_pressure_mask,
+            self.pressure_id,
+            self.n_pressure_unknowns,
+        ) = self._build_pressure_indexing()
+
+        self.A_pressure = self._build_pressure_laplacian()
+
+        # Optional sparse preconditioner
+        self.M_pressure = None
+        if self.poisson_method in ("bicgstab", "cg") and self.use_preconditioner:
+            self.M_pressure = self._build_ilu_preconditioner(self.A_pressure)
+
+        # Optional AMG hierarchy
+        self.amg_solver = None
+        if self.poisson_method == "amg":
+            if not HAVE_PYAMG:
+                raise ImportError(
+                    "poisson_method='amg' requested, but pyamg is not installed."
+                )
+            self.amg_solver = pyamg.smoothed_aggregation_solver(self.A_pressure)
+
+        # Force consistent initial state
+        self._apply_velocity_bc(self.u, self.v, dt=self.dt)
+        self._apply_pressure_bc(self.p)
+
+    # INDEXING / MATRIX ASSEMBLY
+
+    def _build_pressure_indexing(self):
+        """
+        Build pressure unknown mapping.
+
+        Unknowns are pressure values on:
+            - fluid cells
+            - excluding obstacle cells
+            - excluding outlet cells with Dirichlet p = 0
+        """
+        fluid = self.masks["fluid"]
+        obstacle = self.masks["obstacle"]
+        right = self.masks["right"]
+
+        # Dirichlet pressure anchor at outlet
+        dirichlet_pressure_mask = fluid & right & (~obstacle)
+
+        # Active unknowns: all fluid cells except outlet Dirichlet and obstacle
+        active_pressure_mask = fluid & (~obstacle) & (~dirichlet_pressure_mask)
+
+        pressure_id = -np.ones((self.nx, self.ny), dtype=np.int64)
+        counter = 0
+        for i in range(self.nx):
+            for j in range(self.ny):
+                if active_pressure_mask[i, j]:
+                    pressure_id[i, j] = counter
+                    counter += 1
+
+        return active_pressure_mask, dirichlet_pressure_mask, pressure_id, counter
+
+    def _build_pressure_laplacian(self):
+        """
+        Assemble sparse matrix for:
+            -Δ p = rhs
+
+        Boundary treatment:
+            - left boundary (inlet):   dp/dx = 0
+            - top/bottom walls:        dp/dy = 0
+            - obstacle:                dp/dn = 0
+            - right boundary:          p = 0
+        """
+        nx, ny = self.nx, self.ny
+        dx2 = self.dx * self.dx
+        dy2 = self.dy * self.dy
+
+        A = lil_matrix((self.n_pressure_unknowns, self.n_pressure_unknowns))
+
+        active = self.active_pressure_mask
+        dirichlet = self.dirichlet_pressure_mask
+        obstacle = self.masks["obstacle"]
+
+        def coeff(di, dj):
+            return 1.0 / dx2 if di != 0 else 1.0 / dy2
+
+        for i in range(nx):
+            for j in range(ny):
+                if not active[i, j]:
+                    continue
+
+                row = self.pressure_id[i, j]
+                diag = 0.0
+
+                for di, dj in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                    ni = i + di
+                    nj = j + dj
+                    c = coeff(di, dj)
+
+                    # Outside domain -> Neumann
+                    if ni < 0 or ni >= nx or nj < 0 or nj >= ny:
+                        continue
+
+                    # Obstacle neighbor -> zero-normal-gradient
+                    if obstacle[ni, nj]:
+                        continue
+
+                    # Outlet Dirichlet p = 0
+                    if dirichlet[ni, nj]:
+                        diag += c
+                        continue
+
+                    # Normal active neighbor
+                    if active[ni, nj]:
+                        diag += c
+                        col = self.pressure_id[ni, nj]
+                        A[row, col] += -c
+                        continue
+
+                if diag <= 0.0:
+                    diag = 1.0
+                A[row, row] += diag
+
+        return csr_matrix(A)
+
+    def _build_ilu_preconditioner(self, A):
+        """
+        Build ILU preconditioner for Krylov solves.
+        """
+        try:
+            ilu = spilu(
+                A.tocsc(),
+                drop_tol=self.ilu_drop_tol,
+                fill_factor=self.ilu_fill_factor,
+            )
+
+            def mv(x):
+                return ilu.solve(x)
+
+            return LinearOperator(A.shape, matvec=mv)
+        except Exception:
+            return None
+
+    # NUMBA KERNELS
+    @staticmethod
+    @njit(cache=True, parallel=True)
+    def _predictor_step_numba(
+        ut,
+        vt,
+        u,
+        v,
+        dx,
+        dy,
+        dt,
+        nu,
+        fluid_mask,
+        obstacle_mask,
+        fx,
+        fy,
+        use_second_order,
+    ):
+        """
+        Compute tentative velocity field (u*, v*) without pressure correction.
+
+        Convection:
+            - first-order upwind if use_second_order == False
+            - second-order upwind with first-order fallback otherwise
+        Diffusion:
+            - second-order central differences
+        """
+        nx, ny = u.shape
+
+        # copy old state first
+        for i in prange(nx):
+            for j in range(ny):
+                ut[i, j] = u[i, j]
+                vt[i, j] = v[i, j]
+
+        for i in prange(1, nx - 1):
+            for j in range(1, ny - 1):
+                if (not fluid_mask[i, j]) or obstacle_mask[i, j]:
+                    ut[i, j] = 0.0
+                    vt[i, j] = 0.0
+                    continue
+
+                # Convection derivatives
+                # x-derivatives use sign of u[i,j]
+                # y-derivatives use sign of v[i,j]
+
+                if use_second_order:
+                    # dudx and dvdx: second-order upwind in x
+                    if u[i, j] >= 0.0:
+                        if i >= 2 and (not obstacle_mask[i - 1, j]) and (not obstacle_mask[i - 2, j]):
+                            dudx = (3.0 * u[i, j] - 4.0 * u[i - 1, j] + u[i - 2, j]) / (2.0 * dx)
+                            dvdx = (3.0 * v[i, j] - 4.0 * v[i - 1, j] + v[i - 2, j]) / (2.0 * dx)
+                        else:
+                            dudx = (u[i, j] - u[i - 1, j]) / dx
+                            dvdx = (v[i, j] - v[i - 1, j]) / dx
+                    else:
+                        if i <= nx - 3 and (not obstacle_mask[i + 1, j]) and (not obstacle_mask[i + 2, j]):
+                            dudx = (-3.0 * u[i, j] + 4.0 * u[i + 1, j] - u[i + 2, j]) / (2.0 * dx)
+                            dvdx = (-3.0 * v[i, j] + 4.0 * v[i + 1, j] - v[i + 2, j]) / (2.0 * dx)
+                        else:
+                            dudx = (u[i + 1, j] - u[i, j]) / dx
+                            dvdx = (v[i + 1, j] - v[i, j]) / dx
+
+                    # dudy and dvdy: second-order upwind in y
+                    if v[i, j] >= 0.0:
+                        if j >= 2 and (not obstacle_mask[i, j - 1]) and (not obstacle_mask[i, j - 2]):
+                            dudy = (3.0 * u[i, j] - 4.0 * u[i, j - 1] + u[i, j - 2]) / (2.0 * dy)
+                            dvdy = (3.0 * v[i, j] - 4.0 * v[i, j - 1] + v[i, j - 2]) / (2.0 * dy)
+                        else:
+                            dudy = (u[i, j] - u[i, j - 1]) / dy
+                            dvdy = (v[i, j] - v[i, j - 1]) / dy
+                    else:
+                        if j <= ny - 3 and (not obstacle_mask[i, j + 1]) and (not obstacle_mask[i, j + 2]):
+                            dudy = (-3.0 * u[i, j] + 4.0 * u[i, j + 1] - u[i, j + 2]) / (2.0 * dy)
+                            dvdy = (-3.0 * v[i, j] + 4.0 * v[i, j + 1] - v[i, j + 2]) / (2.0 * dy)
+                        else:
+                            dudy = (u[i, j + 1] - u[i, j]) / dy
+                            dvdy = (v[i, j + 1] - v[i, j]) / dy
+
+                else:
+                    # first-order upwind everywhere
+                    if u[i, j] >= 0.0:
+                        dudx = (u[i, j] - u[i - 1, j]) / dx
+                        dvdx = (v[i, j] - v[i - 1, j]) / dx
+                    else:
+                        dudx = (u[i + 1, j] - u[i, j]) / dx
+                        dvdx = (v[i + 1, j] - v[i, j]) / dx
+
+                    if v[i, j] >= 0.0:
+                        dudy = (u[i, j] - u[i, j - 1]) / dy
+                        dvdy = (v[i, j] - v[i, j - 1]) / dy
+                    else:
+                        dudy = (u[i, j + 1] - u[i, j]) / dy
+                        dvdy = (v[i, j + 1] - v[i, j]) / dy
+
+                # Diffusion: second-order central differences
+                lap_u = (
+                    (u[i + 1, j] - 2.0 * u[i, j] + u[i - 1, j]) / (dx * dx)
+                    + (u[i, j + 1] - 2.0 * u[i, j] + u[i, j - 1]) / (dy * dy)
+                )
+                lap_v = (
+                    (v[i + 1, j] - 2.0 * v[i, j] + v[i - 1, j]) / (dx * dx)
+                    + (v[i, j + 1] - 2.0 * v[i, j] + v[i, j - 1]) / (dy * dy)
+                )
+
+                ut[i, j] = u[i, j] + dt * (
+                    -u[i, j] * dudx
+                    -v[i, j] * dudy
+                    + nu * lap_u
+                    + fx[i, j]
+                )
+
+                vt[i, j] = v[i, j] + dt * (
+                    -u[i, j] * dvdx
+                    -v[i, j] * dvdy
+                    + nu * lap_v
+                    + fy[i, j]
+                )
+
+    @staticmethod
+    @njit(cache=True, parallel=True)
+    def _build_pressure_rhs_numba(
+        b_full, ut, vt, dx, dy, rho, dt, fluid_mask, obstacle_mask,
+    ):
+        nx, ny = ut.shape
+
+        for i in prange(nx):
+            for j in range(ny):
+                b_full[i, j] = 0.0
+
+        for i in prange(1, nx - 1):
+            for j in range(1, ny - 1):
+                if (not fluid_mask[i, j]) or obstacle_mask[i, j]:
+                    continue
+                if obstacle_mask[i + 1, j]:
+                    continue
+                if obstacle_mask[i - 1, j]:
+                    continue
+                if obstacle_mask[i, j + 1]:
+                    continue
+                if obstacle_mask[i, j - 1]:
+                    continue
+
+                div_u = (
+                    (ut[i + 1, j] - ut[i - 1, j]) / (2.0 * dx)
+                    + (vt[i, j + 1] - vt[i, j - 1]) / (2.0 * dy)
+                )
+                b_full[i, j] = -(rho / dt) * div_u
+
+    @staticmethod
+    @njit(cache=True, parallel=True)
+    def _correct_velocity_numba(
+        u,
+        v,
+        ut,
+        vt,
+        p,
+        dx,
+        dy,
+        dt,
+        rho,
+        fluid_mask,
+        obstacle_mask,
+    ):
+        """
+        Correct tentative velocities with pressure gradient:
+            u = u* - dt/rho * dp/dx
+            v = v* - dt/rho * dp/dy
+
+        Obstacle-adjacent pressure gradients use a simple mirrored-pressure rule:
+            if neighbor is obstacle, use p_neighbor = p_center
+        """
+        nx, ny = u.shape
+
+        for i in prange(nx):
+            for j in range(ny):
+                u[i, j] = ut[i, j]
+                v[i, j] = vt[i, j]
+
+        for i in prange(1, nx - 1):
+            for j in range(1, ny - 1):
+                if (not fluid_mask[i, j]) or obstacle_mask[i, j]:
+                    u[i, j] = 0.0
+                    v[i, j] = 0.0
+                    continue
+
+                p_ip1j = p[i, j] if obstacle_mask[i + 1, j] else p[i + 1, j]
+                p_im1j = p[i, j] if obstacle_mask[i - 1, j] else p[i - 1, j]
+                p_ijp1 = p[i, j] if obstacle_mask[i, j + 1] else p[i, j + 1]
+                p_ijm1 = p[i, j] if obstacle_mask[i, j - 1] else p[i, j - 1]
+
+                dpdx = (p_ip1j - p_im1j) / (2.0 * dx)
+                dpdy = (p_ijp1 - p_ijm1) / (2.0 * dy)
+
+                u[i, j] = ut[i, j] - (dt / rho) * dpdx
+                v[i, j] = vt[i, j] - (dt / rho) * dpdy
+
+    @staticmethod
+    @njit(cache=True)
+    def _divergence_inf_numba(u, v, fluid_mask, obstacle_mask, dx, dy):
+        """
+        Compute infinity norm of divergence on clean fluid cells only.
+        Left serial intentionally; diagnostics are not the main bottleneck.
+        """
+        nx, ny = u.shape
+        max_div = 0.0
+
+        for i in range(1, nx - 1):
+            for j in range(1, ny - 1):
+                if (not fluid_mask[i, j]) or obstacle_mask[i, j]:
+                    continue
+                if obstacle_mask[i + 1, j]:
+                    continue
+                if obstacle_mask[i - 1, j]:
+                    continue
+                if obstacle_mask[i, j + 1]:
+                    continue
+                if obstacle_mask[i, j - 1]:
+                    continue
+
+                div_u = abs(
+                    (u[i + 1, j] - u[i - 1, j]) / (2.0 * dx)
+                    + (v[i, j + 1] - v[i, j - 1]) / (2.0 * dy)
+                )
+                if div_u > max_div:
+                    max_div = div_u
+
+        return max_div
+
+    # HELPERS
+
+    def _apply_velocity_bc(self, u, v, dt=None):
+        """
+        Apply environment-defined mixed velocity BCs in-place.
+
+        Current interpretation:
+            - u Dirichlet at wall + inlet
+            - v Dirichlet at wall
+            - zero-gradient for v at inlet
+            - outlet either zero-gradient or convective
+            - obstacle forced to no-slip
+        """
+        if dt is None:
+            dt = self.dt
+
+        bc = self.bc
+        masks = self.masks
+
+        # Dirichlet masks from environment
+        u[bc["u"]["dirichlet_mask"]] = bc["u"]["dirichlet_value"][bc["u"]["dirichlet_mask"]]
+        v[bc["v"]["dirichlet_mask"]] = bc["v"]["dirichlet_value"][bc["v"]["dirichlet_mask"]]
+
+        # Left inlet: v zero-gradient
+        left_inlet = masks["left"] & ~masks["wall"]
+        if np.any(left_inlet):
+            v[0, left_inlet[0, :]] = v[1, left_inlet[0, :]]
+
+        # Right outlet
+        right_outlet = masks["right"] & ~masks["obstacle"]
+        if np.any(right_outlet):
+            mask = right_outlet[-1, :]
+
+            if self.outlet_bc == "zero_gradient":
+                u[-1, mask] = u[-2, mask]
+                v[-1, mask] = v[-2, mask]
+
+            elif self.outlet_bc == "convective":
+                Uc = (
+                    float(self.outlet_convection_speed)
+                    if self.outlet_convection_speed is not None
+                    else float(self.environment.v0)
+                )
+
+                alpha = Uc * dt / max(self.dx, 1e-14)
+                alpha = min(max(alpha, 0.0), 1.0)
+
+                u[-1, mask] = u[-1, mask] - alpha * (u[-1, mask] - u[-2, mask])
+                v[-1, mask] = v[-1, mask] - alpha * (v[-1, mask] - v[-2, mask])
+
+        # Obstacle: no-slip
+        u[masks["obstacle"]] = 0.0
+        v[masks["obstacle"]] = 0.0
+
+    def _apply_pressure_bc(self, p):
+        """
+        Scatter fixed pressure values into the full pressure field.
+
+        Current choice:
+            - outlet pressure anchor p = 0
+            - obstacle pressure stored as 0 for plotting only
+        """
+        p[self.dirichlet_pressure_mask] = 0.0
+        p[self.masks["obstacle"]] = 0.0
+
+    def _compute_dt(self):
+        """
+        Compute stable timestep based on convective CFL and explicit diffusion.
+        """
+        if not self.adaptive_dt:
+            return self.dt
+
+        fluid = self.masks["fluid"]
+        speed_u = np.max(np.abs(self.u[fluid])) if np.any(fluid) else 0.0
+        speed_v = np.max(np.abs(self.v[fluid])) if np.any(fluid) else 0.0
+        speed_u = max(speed_u, 1e-12)
+        speed_v = max(speed_v, 1e-12)
+
+        dt_adv = self.cfl_safety * min(self.dx / speed_u, self.dy / speed_v)
+        dt_diff = self.diff_safety * min(self.dx * self.dx, self.dy * self.dy) / max(
+            self.nu, 1e-12
+        )
+
+        return min(self.dt, dt_adv, dt_diff)
+
+    def _build_source_arrays(self):
+        """
+        Evaluate external forcing from the environment.
+        """
+        fx_raw, fy_raw = self.environment.source_term(self.X, self.Y, self.time)
+
+        fx = np.asarray(fx_raw, dtype=float)
+        fy = np.asarray(fy_raw, dtype=float)
+
+        if fx.shape == ():
+            fx = np.full_like(self.u, float(fx))
+        if fy.shape == ():
+            fy = np.full_like(self.v, float(fy))
+
+        return fx, fy
+
+    def _extract_active_rhs(self):
+        rhs = np.zeros(self.n_pressure_unknowns, dtype=float)
+        mask = self.pressure_id >= 0
+        rhs[self.pressure_id[mask]] = self.b_full[mask]
+        return rhs
+
+    def _extract_active_pressure_guess(self):
+        x0 = np.zeros(self.n_pressure_unknowns, dtype=float)
+        mask = self.pressure_id >= 0
+        x0[self.pressure_id[mask]] = self.p[mask]
+        return x0
+
+    def _scatter_active_pressure(self, p_active):
+        self.p[:, :] = 0.0
+        mask = self.pressure_id >= 0
+        self.p[mask] = p_active[self.pressure_id[mask]]
+        self._apply_pressure_bc(self.p)
+
+    def _solve_pressure(self):
+        """
+        Solve the sparse pressure system using the requested method.
+        """
+        self._apply_pressure_bc(self.p)
+        rhs = self._extract_active_rhs()
+        x0 = self._extract_active_pressure_guess()
+
+        if self.poisson_method == "bicgstab":
+            p_active, info = bicgstab(
+                self.A_pressure,
+                rhs,
+                x0=x0,
+                rtol=self.pressure_tol,
+                atol=0.0,
+                maxiter=self.pressure_maxiter,
+                M=self.M_pressure,
+            )
+            if info != 0:
+                print(f"  Warning: bicgstab returned info={info}")
+
+        elif self.poisson_method == "cg":
+            p_active, info = cg(
+                self.A_pressure,
+                rhs,
+                x0=x0,
+                rtol=self.pressure_tol,
+                atol=0.0,
+                maxiter=self.pressure_maxiter,
+                M=self.M_pressure,
+            )
+            if info != 0:
+                print(f"  Warning: cg returned info={info}")
+
+        elif self.poisson_method == "amg":
+            if self.amg_solver is None:
+                raise RuntimeError("AMG solver not initialized.")
+            p_active = self.amg_solver.solve(
+                rhs,
+                x0=x0,
+                tol=self.pressure_tol,
+                maxiter=self.pressure_maxiter,
+            )
+
+        else:
+            raise ValueError(
+                f"Unknown poisson_method='{self.poisson_method}'. "
+                "Use 'bicgstab', 'cg', or 'amg'."
+            )
+
+        self._scatter_active_pressure(p_active)
+
+    def _single_step(self, dt):
+        """
+        Advance the solution by one timestep.
+        """
+        fx, fy = self._build_source_arrays()
+
+        # 1) Tentative velocity
+        self._predictor_step_numba(
+            self.ut,
+            self.vt,
+            self.u,
+            self.v,
+            self.dx,
+            self.dy,
+            dt,
+            self.nu,
+            self.masks["fluid"],
+            self.masks["obstacle"],
+            fx,
+            fy,
+            self.convection_order == "second",
+        )
+        self._apply_velocity_bc(self.ut, self.vt, dt=dt)
+
+        # 2) Pressure RHS
+        self._build_pressure_rhs_numba(
+            self.b_full,
+            self.ut,
+            self.vt,
+            self.dx,
+            self.dy,
+            self.rho,
+            dt,
+            self.masks["fluid"],
+            self.masks["obstacle"],
+        )
+
+        # 3) Pressure solve
+        self._solve_pressure()
+
+        # 4) Velocity correction
+        self._correct_velocity_numba(
+            self.u,
+            self.v,
+            self.ut,
+            self.vt,
+            self.p,
+            self.dx,
+            self.dy,
+            dt,
+            self.rho,
+            self.masks["fluid"],
+            self.masks["obstacle"],
+        )
+        self._apply_velocity_bc(self.u, self.v, dt=dt)
+
+        self.time += dt
+
+    def _diagnostics(self):
+        """
+        Return diagnostic quantities for logging and stability monitoring.
+        """
+        speed = np.sqrt(self.u**2 + self.v**2)
+        speed[self.masks["obstacle"]] = np.nan
+
+        div_inf = self._divergence_inf_numba(
+            self.u,
+            self.v,
+            self.masks["fluid"],
+            self.masks["obstacle"],
+            self.dx,
+            self.dy,
+        )
+
+        return {
+            "time": float(self.time),
+            "u_max": float(np.nanmax(np.abs(self.u))),
+            "v_max": float(np.nanmax(np.abs(self.v))),
+            "speed_max": float(np.nanmax(speed)),
+            "div_inf": float(div_inf),
+            "p_max": float(np.nanmax(np.abs(self.p))),
+        }
+
+    def solve(
+        self,
+        verbose=True,
+        visualizer=None,
+        record_video=False,
+        video_filename="fdm_simulation.mp4",
+        visualize_every=50,
+        return_history=True,
+    ):
+        """
+        Run the finite-difference Navier–Stokes simulation.
+        """
+        sim_visualizer = None
+        if visualizer is not None:
+            from visualization import SimulationVisualizer
+            sim_visualizer = SimulationVisualizer(
+                self.nx,
+                self.ny,
+                self.masks["obstacle"],
+                fps=30,
+                record_video=record_video,
+                video_filename=video_filename,
+            )
+            sim_visualizer.setup(visualizer)
+
+        if verbose:
+            print("Initializing FDM solver...")
+            print(f"  Grid: {self.nx} x {self.ny}")
+            print(f"  dx, dy: {self.dx:.5e}, {self.dy:.5e}")
+            print(f"  Base dt: {self.dt:.5e}")
+            print(f"  Viscosity used: {self.nu:.5e}")
+            print(f"  Reynolds number: {self.reynolds_number:.2f}")
+            print(f"  Pressure unknowns: {self.n_pressure_unknowns}")
+            print(f"  Poisson method: {self.poisson_method}")
+            print(f"  Pressure tol: {self.pressure_tol:.1e}")
+            print(f"  Pressure maxiter: {self.pressure_maxiter}")
+            print(f"  Convection order: {self.convection_order}")
+            print(f"  Outlet BC: {self.outlet_bc}")
+            if self.outlet_bc == "convective":
+                Uc = (
+                    float(self.outlet_convection_speed)
+                    if self.outlet_convection_speed is not None
+                    else float(self.environment.v0)
+                )
+                print(f"  Outlet convection speed: {Uc:.5e}")
+            if self.poisson_method == "amg":
+                print(f"  PyAMG available: {HAVE_PYAMG}")
+            if self.poisson_method in ("bicgstab", "cg"):
+                print(f"  ILU preconditioner: {'yes' if self.M_pressure is not None else 'no'}")
+
+        history = {
+            "time": [],
+            "dt": [],
+            "u_max": [],
+            "v_max": [],
+            "speed_max": [],
+            "div_inf": [],
+            "p_max": [],
+        }
+
+        for step in range(1, self.n_steps + 1):
+            dt = self._compute_dt()
+            self._single_step(dt)
+            diag = self._diagnostics()
+
+            if return_history:
+                history["time"].append(diag["time"])
+                history["dt"].append(dt)
+                history["u_max"].append(diag["u_max"])
+                history["v_max"].append(diag["v_max"])
+                history["speed_max"].append(diag["speed_max"])
+                history["div_inf"].append(diag["div_inf"])
+                history["p_max"].append(diag["p_max"])
+
+            if verbose and (step == 1 or step % 1000 == 0):
+                print(
+                    f"step={step:6d}/{self.n_steps}  "
+                    f"t={diag['time']:.5f}  "
+                    f"dt={dt:.3e}  "
+                    f"|u|max={diag['speed_max']:.4f}  "
+                    f"||div u||_inf={diag['div_inf']:.3e}  "
+                    f"|p|max={diag['p_max']:.3e}"
+                )
+
+            if sim_visualizer is not None and step % visualize_every == 0:
+                field = visualizer.compute_field(self.u, self.v, self.p)
+                sim_visualizer.update(field, step)
+
+        if sim_visualizer is not None:
+            sim_visualizer.finalize()
+
+        result = {
+            "ux": self.u.copy(),
+            "uy": self.v.copy(),
+            "p": self.p.copy(),
+            "obstacle": self.masks["obstacle"].copy(),
+            "fluid": self.masks["fluid"].copy(),
+            "metadata": {
+                "nx": self.nx,
+                "ny": self.ny,
+                "dx": self.dx,
+                "dy": self.dy,
+                "dt_base": self.dt,
+                "adaptive_dt": self.adaptive_dt,
+                "time_final": self.time,
+                "n_steps": self.n_steps,
+                "rho": self.rho,
+                "nu": self.nu,
+                "u_inlet": float(self.environment.v0),
+                "reynolds_number": self.reynolds_number,
+                "poisson_method": self.poisson_method,
+                "pressure_tol": self.pressure_tol,
+                "pressure_maxiter": self.pressure_maxiter,
+                "pressure_unknowns": self.n_pressure_unknowns,
+                "pyamg_available": HAVE_PYAMG,
+                "convection_order": self.convection_order,
+                "outlet_bc": self.outlet_bc,
+                "outlet_convection_speed": (
+                    float(self.outlet_convection_speed)
+                    if self.outlet_convection_speed is not None
+                    else None
+                ),
+            },
+        }
+
+        if return_history:
+            result["history"] = history
+
+        return result
 
 
 class LBMSolver(Solver):
