@@ -20,6 +20,7 @@ from visualization import (
     VelocityMagnitudeVisualizer,
     VorticityVisualizer,
     PressureVisualizer,
+    StreamlineVisualizer,
     EnvironmentVisualizer,
     FlowFieldPlotter
 )
@@ -62,10 +63,14 @@ def main():
         nx=int(220*scaling),
         ny=int(41*scaling),
         u_inlet=0.12,
-        reynolds_number=450,
+        reynolds_number=850,
         n_steps=10000,  # Full run
         vis_interval=200,
         velocity_ramp_tau=400,
+        inlet_bc = 'regularized',
+        alpha = 1.0,
+        collision_model='bgk',
+        bc_ramp_tau=1e8,
     )
 
     print(f"      Solver configuration:")
@@ -131,6 +136,13 @@ def main():
     plotter.plot_field(pres_field, pres_viz, step=metadata['n_steps'])
     plotter.save('assignment_3/outputs/04_final_pressure.png')
 
+    # Visualization 4: Streamlines on top of speed magnitude
+    print("      Generating streamline field...")
+    stream_viz = StreamlineVisualizer(cmap='magma', density=1.2, color='white', linewidth=0.8)
+    stream_field = stream_viz.compute_field(ux, uy)
+    plotter.plot_field(stream_field, stream_viz, step=metadata['n_steps'])
+    plotter.save('assignment_3/outputs/05_final_streamlines.png')
+
     plotter.close()
 
     # =========================================================================
@@ -178,6 +190,7 @@ def main():
     print("  2. outputs/02_final_velocity.png     - Final velocity magnitude")
     print("  3. outputs/03_final_vorticity.png    - Final vorticity field")
     print("  4. outputs/04_final_pressure.png     - Final pressure/density")
+    print("  5. outputs/05_final_streamlines.png  - Final speed + streamlines")
 
     print("\nSimulation metadata:")
     print(f"  Grid size: {metadata['nx']} × {metadata['ny']}")

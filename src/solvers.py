@@ -40,13 +40,58 @@ def _equilibrium_kernel(rho, ux, uy, c, w, feq):
 
 
 @njit(cache=True)
-def _collide_kernel(f, feq, tau, f_out):
+def _collide_kernel(f, feq, tau, f_out, alpha):
     nx, ny, _ = f.shape
     inv_tau = 1.0 / tau
+
     for x in range(nx):
         for y in range(ny):
             for i in range(9):
-                f_out[x, y, i] = f[x, y, i] - (f[x, y, i] - feq[x, y, i]) * inv_tau
+                fi = f[x, y, i]
+                feq_i = feq[x, y, i]
+
+                # BGK collision (compute non-equilibrium part)
+                fneq = fi - feq_i
+                f_post = fi - fneq * inv_tau   # standard BGK
+
+                # Apply non-equilibrium damping
+                fneq_post = f_post - feq_i
+                f_out[x, y, i] = feq_i + alpha * fneq_post
+
+
+@njit(cache=True)
+def _collide_trt_kernel(f, feq, tau_plus, tau_minus, opp, f_out, alpha):
+    nx, ny, _ = f.shape
+    omega_plus = 1.0 / tau_plus
+    omega_minus = 1.0 / tau_minus
+
+    for x in range(nx):
+        for y in range(ny):
+            # Rest direction (self-opposite) uses symmetric rate only
+            fi = f[x, y, 0]
+            feq_i = feq[x, y, 0]
+            fneq = fi - feq_i
+            f_out[x, y, 0] = feq_i + alpha * (fi - omega_plus * fneq - feq_i)
+
+            # Handle pairs once (i < opp[i])
+            for i in range(1, 9):
+                io = opp[i]
+                if i < io:
+                    fi = f[x, y, i]
+                    fio = f[x, y, io]
+                    feq_i = feq[x, y, i]
+                    feq_io = feq[x, y, io]
+
+                    f_plus = 0.5 * (fi + fio)
+                    f_minus = 0.5 * (fi - fio)
+                    feq_plus = 0.5 * (feq_i + feq_io)
+                    feq_minus = 0.5 * (feq_i - feq_io)
+
+                    fp = f_plus - omega_plus * (f_plus - feq_plus)
+                    fm = f_minus - omega_minus * (f_minus - feq_minus)
+
+                    f_out[x, y, i] = feq_i + alpha * (fp + fm - feq_i)
+                    f_out[x, y, io] = feq_io + alpha * (fp - fm - feq_io)
 
 
 @njit(cache=True)
@@ -62,12 +107,21 @@ def _bounce_back_kernel(f, f_out, obstacle, opp):
 @njit(cache=True)
 def _stream_kernel(f_out, c, f):
     nx, ny, _ = f.shape
+
+    # Start with a copy
     for x in range(nx):
         for y in range(ny):
             for i in range(9):
-                sx = (x - c[i, 0]) % nx
-                sy = (y - c[i, 1]) % ny
-                f[x, y, i] = f_out[sx, sy, i]
+                f[x, y, i] = f_out[x, y, i]
+
+    # Streaming
+    for x in range(nx):
+        for y in range(ny):
+            for i in range(9):
+                sx = x - c[i, 0]
+                sy = y - c[i, 1]
+                if 0 <= sx < nx and 0 <= sy < ny:
+                    f[x, y, i] = f_out[sx, sy, i]
 
 
 @njit(cache=True)
@@ -103,18 +157,15 @@ def _compute_ramped_velocity(step, u_inlet, tau_ramp):
     return u_inlet * (1.0 - np.exp(-float(step) / tau_ramp))
 
 
-@njit(cache=True)
-def _inlet_zou_he_kernel(f, u_inlet):
-    _, ny, _ = f.shape
-    for y in range(ny):
-        rho_in = (f[0, y, 0] + f[0, y, 2] + f[0, y, 4] + 2.0 * (f[0, y, 3] + f[0, y, 6] + f[0, y, 7])) / (1.0 - u_inlet)
-        f[0, y, 1] = f[0, y, 3] + (2.0 / 3.0) * rho_in * u_inlet
-        f[0, y, 5] = f[0, y, 7] - 0.5 * (f[0, y, 2] - f[0, y, 4]) + (1.0 / 6.0) * rho_in * u_inlet
-        f[0, y, 8] = f[0, y, 6] + 0.5 * (f[0, y, 2] - f[0, y, 4]) + (1.0 / 6.0) * rho_in * u_inlet
+def _compute_ramped_value(step, target, tau_ramp):
+    """Smooth exponential ramp to target; if tau_ramp<=0 returns target immediately."""
+    if tau_ramp is None or tau_ramp <= 0:
+        return target
+    return target * (1.0 - np.exp(-float(step) / tau_ramp))
 
 
 @njit(cache=True)
-def _inlet_regularized_kernel(f, u_inlet, c, w):
+def _inlet_zou_he_kernel(f, u_inlet, c, w, neq_scale):
     _, ny, _ = f.shape
     for y in range(ny):
         rho_in = (f[0, y, 0] + f[0, y, 2] + f[0, y, 4] + 2.0 * (f[0, y, 3] + f[0, y, 6] + f[0, y, 7])) / (1.0 - u_inlet)
@@ -127,10 +178,66 @@ def _inlet_regularized_kernel(f, u_inlet, c, w):
             cu = c[i, 0] * ux + c[i, 1] * uy
             feq[i] = w[i] * rho_in * (1.0 + 3.0 * cu + 4.5 * cu * cu - 1.5 * usqr)
 
-        # Reconstruct incoming populations using equilibrium + reflected non-equilibrium.
-        f[0, y, 1] = feq[1] + (f[0, y, 3] - feq[3])
-        f[0, y, 5] = feq[5] + (f[0, y, 7] - feq[7])
-        f[0, y, 8] = feq[8] + (f[0, y, 6] - feq[6])
+        # TRT-consistent non-equilibrium reconstruction for incoming populations.
+        f[0, y, 1] = feq[1] + neq_scale * (f[0, y, 3] - feq[3])
+        f[0, y, 5] = feq[5] + neq_scale * (f[0, y, 7] - feq[7])
+        f[0, y, 8] = feq[8] + neq_scale * (f[0, y, 6] - feq[6])
+
+
+
+
+@njit(cache=True)
+def _inlet_regularized_kernel(f, u_inlet, c, w, neq_scale):
+    _, ny, _ = f.shape
+    for y in range(ny):
+        rho_in = f[0, y, 0] + f[0, y, 2] + f[0, y, 4] + 2.0 * (f[0, y, 3] + f[0, y, 6] + f[0, y, 7])
+
+        feq = np.empty(9, dtype=np.float64)
+        for i in range(9):
+            cu = c[i, 0] * u_inlet + c[i, 1] * 0.0
+            feq[i] = w[i] * rho_in * (1.0 + 3.0 * cu + 4.5 * cu ** 2 - 1.5 * u_inlet ** 2)
+
+        f[0, y, 1] = feq[1] + neq_scale*(f[0, y, 3] - feq[3])
+        f[0, y, 5] = feq[5] + neq_scale*(f[0, y, 7] - feq[7])
+        f[0, y, 8] = feq[8] + neq_scale*(f[0, y, 6] - feq[6])
+
+
+@njit(cache=True)
+def _bottom_bounce_back_wall_kernel(f, w, neq_scale):
+    nx, _, _ = f.shape
+    y = 0
+    for x in range(nx):
+        rho = f[x, y, 0] + f[x, y, 1] + f[x, y, 3] + 2.0 * (f[x, y, 4] + f[x, y, 7] + f[x, y, 8])
+
+        feq2 = w[2] * rho
+        feq4 = w[4] * rho
+        feq5 = w[5] * rho
+        feq7 = w[7] * rho
+        feq6 = w[6] * rho
+        feq8 = w[8] * rho
+
+        f[x, y, 2] = feq2 + neq_scale * (f[x, y, 4] - feq4)
+        f[x, y, 5] = feq5 + neq_scale * (f[x, y, 7] - feq7)
+        f[x, y, 6] = feq6 + neq_scale * (f[x, y, 8] - feq8)
+
+
+@njit(cache=True)
+def _top_bounce_back_wall_kernel(f, w, neq_scale):
+    nx, ny, _ = f.shape
+    y = ny - 1
+    for x in range(nx):
+        rho = f[x, y, 0] + f[x, y, 1] + f[x, y, 3] + 2.0 * (f[x, y, 2] + f[x, y, 5] + f[x, y, 6])
+
+        feq2 = w[2] * rho
+        feq4 = w[4] * rho
+        feq5 = w[5] * rho
+        feq7 = w[7] * rho
+        feq6 = w[6] * rho
+        feq8 = w[8] * rho
+
+        f[x, y, 4] = feq4 + neq_scale * (f[x, y, 2] - feq2)
+        f[x, y, 7] = feq7 + neq_scale * (f[x, y, 5] - feq5)
+        f[x, y, 8] = feq8 + neq_scale * (f[x, y, 6] - feq6)
 
 
 class Solver(ABC):
@@ -184,7 +291,9 @@ class LBMSolver(Solver):
 
     def __init__(self, environment, nx, ny, u_inlet, reynolds_number=150,
                  n_steps=30000, vis_interval=100, velocity_ramp_tau=None,
-                 inlet_bc="zou_he"):
+                 inlet_bc="zou_he", top_bc="bounce_back", bottom_bc="bounce_back", alpha=1.0,
+                 collision_model="bgk", tau_minus=None, trt_lambda=0.25,
+                 bc_ramp_tau=None):
         """
         Initialize the LBM solver.
 
@@ -211,6 +320,20 @@ class LBMSolver(Solver):
         inlet_bc : str, optional
             Inlet boundary condition model. Supported: "zou_he" (default)
             and "regularized".
+        top_bc : str, optional
+            Top boundary condition. Supported: "bounce_back" (default)
+            or "periodic".
+        bottom_bc : str, optional
+            Bottom boundary condition. Supported: "bounce_back" (default)
+            or "periodic".
+        collision_model : str, optional
+            Collision operator model: "bgk" (default) or "trt".
+        tau_minus : float, optional
+            Anti-symmetric relaxation time for TRT. If None, it is computed
+            from trt_lambda and tau_plus (= tau).
+        trt_lambda : float, optional
+            TRT magic parameter such that
+            (tau_plus - 0.5) * (tau_minus - 0.5) = trt_lambda.
         """
         super().__init__(environment)
         self.nx = nx
@@ -219,13 +342,36 @@ class LBMSolver(Solver):
         self.reynolds_number = reynolds_number
         self.n_steps = n_steps
         self.vis_interval = min(vis_interval, n_steps // 10)
+        self.alpha = alpha
         # Default ramp time constant: 10% of total steps if not specified
         self.velocity_ramp_tau = velocity_ramp_tau if velocity_ramp_tau is not None else max(100, n_steps // 10)
+        self.collision_model = collision_model.lower().replace("-", "_")
+        self.tau_minus = tau_minus
+        self.trt_lambda = trt_lambda
+        self.neq_reflection_scale = 1.0
+        # Optional separate ramp for boundary non-equilibrium scaling; defaults to velocity ramp
+        self.bc_ramp_tau = bc_ramp_tau if bc_ramp_tau is not None else self.velocity_ramp_tau
 
         inlet_bc_normalized = inlet_bc.lower().replace("-", "_")
         if inlet_bc_normalized not in ("zou_he", "regularized"):
             raise ValueError("inlet_bc must be 'zou_he' or 'regularized'.")
         self.inlet_bc = inlet_bc_normalized
+
+        # Keep backward compatibility: old wall modes map to bounce-back walls.
+        # Periodic wraparound is disabled with bounded streaming.
+        wall_bc_aliases = {
+            "zou_he": "bounce_back",
+            "regularized": "bounce_back",
+            "periodic": "bounce_back",
+        }
+        self.top_bc = wall_bc_aliases.get(top_bc.lower().replace("-", "_"), top_bc.lower().replace("-", "_"))
+        self.bottom_bc = wall_bc_aliases.get(bottom_bc.lower().replace("-", "_"), bottom_bc.lower().replace("-", "_"))
+
+        allowed_wall_bcs = ("bounce_back",)
+        if self.top_bc not in allowed_wall_bcs:
+            raise ValueError("top_bc must be 'bounce_back'.")
+        if self.bottom_bc not in allowed_wall_bcs:
+            raise ValueError("bottom_bc must be 'bounce_back'.")
 
         # D2Q9 Lattice velocities
         self.c = np.array([[0, 0],    # 0 - rest
@@ -251,6 +397,7 @@ class LBMSolver(Solver):
 
         # Calculate relaxation time
         self._calculate_relaxation_time()
+        self._configure_collision_model()
 
     def _setup_obstacle(self):
         """Initialize obstacle mask from environment properties."""
@@ -293,6 +440,28 @@ class LBMSolver(Solver):
         # BGK relaxation time: nu = cs^2 * (tau - 0.5), where cs^2 = 1/3
         self.tau = 3.0 * nu + 0.5
 
+    def _configure_collision_model(self):
+        """Validate and derive collision-model parameters."""
+        if self.collision_model not in ("bgk", "trt"):
+            raise ValueError("collision_model must be 'bgk' or 'trt'.")
+
+        if self.collision_model == "trt":
+            tau_plus = self.tau
+            if tau_plus <= 0.5:
+                raise ValueError("TRT requires tau > 0.5.")
+
+            if self.tau_minus is None:
+                self.tau_minus = 0.5 + self.trt_lambda / (tau_plus - 0.5)
+
+            if self.tau_minus <= 0.5:
+                raise ValueError("TRT requires tau_minus > 0.5.")
+
+            # TRT-consistent boundary reconstruction scaling for non-equilibrium parts.
+            self.neq_reflection_scale = (self.tau_minus - 0.5) / (self.tau - 0.5)
+        else:
+            self.tau_minus = None
+            self.neq_reflection_scale = 1.0
+
     def _equilibrium(self, rho, ux, uy):
         """
         Compute equilibrium distribution function for D2Q9 lattice.
@@ -330,9 +499,17 @@ class LBMSolver(Solver):
     def _apply_inlet_boundary(self, f, u_inlet):
         """Apply selected inlet BC model."""
         if self.inlet_bc == "regularized":
-            _inlet_regularized_kernel(f, u_inlet, self.c, self.w)
+            _inlet_regularized_kernel(f, u_inlet, self.c, self.w, self.neq_reflection_scale)
         else:
-            _inlet_zou_he_kernel(f, u_inlet)
+            _inlet_zou_he_kernel(f, u_inlet, self.c, self.w, self.neq_reflection_scale)
+
+    def _apply_top_bottom_boundaries(self, f, bc_neq_scale):
+        """Apply selected top and bottom wall BC models."""
+        if self.top_bc == "bounce_back":
+            _top_bounce_back_wall_kernel(f, self.w, bc_neq_scale)
+
+        if self.bottom_bc == "bounce_back":
+            _bottom_bounce_back_wall_kernel(f, self.w, bc_neq_scale)
 
     def solve(self, verbose=True, visualizer=None, record_video=False, video_filename='lbm_simulation.mp4'):
         """
@@ -363,6 +540,13 @@ class LBMSolver(Solver):
             print(f"  Grid: {self.nx} x {self.ny}")
             print(f"  Inlet velocity: {self.u_inlet}")
             print(f"  Inlet BC: {self.inlet_bc}")
+            print(f"  Top BC: {self.top_bc}")
+            print(f"  Bottom BC: {self.bottom_bc}")
+            print(f"  Collision model: {self.collision_model}")
+            if self.collision_model == "trt":
+                print(f"  TRT tau+: {self.tau:.4f}, tau-: {self.tau_minus:.4f}, lambda: {self.trt_lambda}")
+                print(f"  TRT BC non-eq scale target: {self.neq_reflection_scale:.4f}")
+                print(f"  BC ramp time constant: {self.bc_ramp_tau:.1f} timesteps")
             print(f"  Velocity ramp time constant: {self.velocity_ramp_tau:.1f} timesteps")
             print(f"  Reynolds number: {self.reynolds_number}")
             print(f"  Relaxation time (tau): {self.tau:.4f}")
@@ -411,13 +595,21 @@ class LBMSolver(Solver):
         for step in range(1, self.n_steps + 1):
             # Compute ramped inlet velocity for smooth initialization
             u_inlet_ramped = _compute_ramped_velocity(step, self.u_inlet, self.velocity_ramp_tau)
+            # Ramp boundary non-equilibrium scale similarly
+            if self.collision_model == "trt":
+                bc_neq_scale = _compute_ramped_value(step, self.neq_reflection_scale, self.bc_ramp_tau)
+            else:
+                bc_neq_scale = 1.0
 
             # 1. Compute macroscopic quantities
             _compute_macroscopic(f, self.c, rho, ux, uy)
 
-            # 2. Collision step (BGK)
+            # 2. Collision step
             _equilibrium_kernel(rho, ux, uy, self.c, self.w, feq)
-            _collide_kernel(f, feq, self.tau, f_out)
+            if self.collision_model == "trt":
+                _collide_trt_kernel(f, feq, self.tau, self.tau_minus, self.opp, f_out, self.alpha)
+            else:
+                _collide_kernel(f, feq, self.tau, f_out, self.alpha)
 
             # 3. Bounce-back on obstacle (no-slip wall)
             _bounce_back_kernel(f, f_out, self.obstacle, self.opp)
@@ -427,12 +619,16 @@ class LBMSolver(Solver):
 
             # 5. Boundary conditions
             _outlet_open_kernel(f)
-            self._apply_inlet_boundary(f, u_inlet_ramped)
+            if self.inlet_bc == "regularized":
+                _inlet_regularized_kernel(f, u_inlet_ramped, self.c, self.w, bc_neq_scale)
+            else:
+                _inlet_zou_he_kernel(f, u_inlet_ramped, self.c, self.w, bc_neq_scale)
+            self._apply_top_bottom_boundaries(f, bc_neq_scale)
 
             # Progress and visualization
             if verbose and step % 1000 == 0:
                 avg_rho = np.mean(rho[~self.obstacle])
-                print(f"  Step {step:>6d}/{self.n_steps}  |  avg density = {avg_rho:.6f}  |  u_inlet_ramped = {u_inlet_ramped:.6f}")
+                print(f"  Step {step:>6d}/{self.n_steps}  |  avg density = {avg_rho:.6f}  |  u_inlet_ramped = {u_inlet_ramped:.6f}  |  bc_neq_scale = {bc_neq_scale:.4f}")
 
             if sim_visualizer is not None and step % self.vis_interval == 0:
                 field = visualizer.compute_field(ux, uy, rho)
@@ -456,6 +652,13 @@ class LBMSolver(Solver):
                 'ny': self.ny,
                 'u_inlet': self.u_inlet,
                 'inlet_bc': self.inlet_bc,
+                'top_bc': self.top_bc,
+                'bottom_bc': self.bottom_bc,
+                'collision_model': self.collision_model,
+                'tau_minus': self.tau_minus,
+                'trt_lambda': self.trt_lambda,
+                'neq_reflection_scale': self.neq_reflection_scale,
+                'bc_ramp_tau': self.bc_ramp_tau,
                 'reynolds_number': self.reynolds_number,
                 'tau': self.tau,
                 'n_steps': self.n_steps
