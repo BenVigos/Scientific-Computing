@@ -37,8 +37,10 @@ def build_refractive_index_map():
         n_map[ix1:ix2+1, iy1:iy2+1] = wall_val
 
     # Outer Walls
-    add_wall(0, 0.15, 0, 8.0); add_wall(9.85, 10.0, 0, 8.0)
-    add_wall(0, 10.0, 0, 0.15); add_wall(0, 10.0, 7.85, 8.0)
+    add_wall(0, 0.15, 0, 8.0)
+    add_wall(9.85, 10.0, 0, 8.0)
+    add_wall(0, 10.0, 0, 0.15)
+    add_wall(0, 10.0, 7.85, 8.0)
     
     # Inner Walls
     add_wall(0.15, 3.0, 2.925, 3.075)   # Kitchen top
@@ -173,7 +175,8 @@ if __name__ == "__main__":
     plt.scatter(best_x, best_y, c='magenta', marker='*', s=300, edgecolors='k', label='Best Pos')
     
     plt.title("DE Sampling Strategy & Optimization Landscape")
-    plt.xlabel("X (m)"); plt.ylabel("Y (m)")
+    plt.xlabel("X (m)")
+    plt.ylabel("Y (m)")
     plt.colorbar(sc, label='Total Signal Strength')
     plt.legend()
     plt.tight_layout()
@@ -230,7 +233,8 @@ if __name__ == "__main__":
     ax.set_title(f"WiFi Signal Coverage at 0.8 GHz (Scaled)\nOptimal Router Position: ({best_x:.2f}, {best_y:.2f}) m")
     ax.set_xlabel("X (meters)")
     ax.set_ylabel("Y (meters)")
-    ax.set_xlim(0, 10); ax.set_ylim(0, 8)
+    ax.set_xlim(0, 10)
+    ax.set_ylim(0, 8)
     
     cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     cbar.set_label('Signal Strength (dB)')
