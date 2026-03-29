@@ -1,0 +1,42 @@
+{
+  "method": "lbm",
+  "grid_index": 2,
+  "nx": 330,
+  "ny": 61,
+  "n_steps": 2814,
+  "target_time": 100.0,
+  "runtime_sec": 2.591762700001709,
+  "stable": true,
+  "metrics": {
+    "l2_ux": 0.013601589104104103,
+    "l2_uy": 0.01456842348185731,
+    "l2_rho": 0.034280217291151424,
+    "rel_l2_ux": 0.15394313748526287,
+    "rel_l2_uy": 0.8257185696688871,
+    "rel_l2_rho": 0.030774550496051423,
+    "total_kinetic_energy": 0.004250591499509167,
+    "enstrophy": 0.7753479859920638,
+    "max_abs_vorticity": 16.569489931272113,
+    "integrated_vorticity_magnitude": 0.8222664476140537,
+    "divergence_l2_error": 0.04020490456918095,
+    "mass_conservation_error": 0.005839357049069055
+  },
+  "config": {
+    "nx": 330,
+    "ny": 61,
+    "u_inlet": 0.12,
+    "reynolds_number": 150.0,
+    "n_steps": 2814,
+    "vis_interval": 2814,
+    "velocity_ramp_tau": 100,
+    "inlet_bc": "regularized",
+    "outlet_bc": "open",
+    "top_bc": "bounce_back",
+    "bottom_bc": "bounce_back",
+    "collision_model": "bgk",
+    "alpha": 1.0,
+    "use_outlet_sponge": true,
+    "outlet_sponge_width": 33,
+    "outlet_sponge_sigma_max": 0.3
+  }
+}
