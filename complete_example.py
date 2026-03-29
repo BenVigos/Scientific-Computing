@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 """
-Comprehensive Example: LBM Solver with Full Visualization Pipeline
+Comprehensive Example: LBM Solver with headless video recording.
 
-This script demonstrates a complete workflow:
-1. Visualize environment setup
-2. Run simulation with live visualization
-3. Analyze results and generate multiple field visualizations
-4. Save outputs
+This script demonstrates:
+1. Environment setup image export
+2. Headless simulation recording of velocity video
+3. Headless simulation recording of vorticity video
+4. Final-state image export and basic statistics
 """
 
 import sys
@@ -14,94 +14,96 @@ sys.path.insert(0, 'src')
 
 import os
 import numpy as np
+import matplotlib
+matplotlib.use("Agg")  # Disable GUI/live windows while still allowing figure/video output
+
 from solvers import LBMSolver
 from envirmonment import KarmannVortex
 from visualization import (
     VelocityMagnitudeVisualizer,
     VorticityVisualizer,
-    PressureVisualizer,
-    StreamlineVisualizer,
     EnvironmentVisualizer,
-    FlowFieldPlotter
+    FlowFieldPlotter,
 )
 
 
-def main():
-    """Run complete LBM simulation with visualization pipeline."""
+def _build_solver(env, scaling=5):
+    """Create a solver instance with shared parameters for reproducible runs."""
+    return LBMSolver(
+        environment=env,
+        nx=int(220 * scaling),
+        ny=int(41 * scaling),
+        u_inlet=0.12,
+        reynolds_number=1300,
+        n_steps=12000,
+        vis_interval=100,
+        velocity_ramp_tau=500,
+        inlet_bc='regularized',
+        outlet_bc='open',
+        alpha=1,
+        collision_model='bgk',
+        bc_ramp_tau=10,
+        outlet_sponge_width=100 * scaling / 4,
+        outlet_sponge_sigma_max=0.3,
+    )
 
-    print("\n" + "="*70)
-    print("LBM Solver - Complete Visualization Pipeline")
-    print("="*70)
+
+def _run_and_record(env, visualizer, video_path, scaling=5, verbose=True, video_fps=12):
+    """Run one headless simulation pass and record a video for the provided field visualizer."""
+    solver = _build_solver(env, scaling=scaling)
+    result = solver.solve(
+        verbose=verbose,
+        visualizer=visualizer,
+        record_video=True,
+        video_filename=video_path,
+        video_fps=video_fps,
+    )
+    return result
+
+
+def main():
+    """Run complete LBM simulation with headless video recording and final-state images."""
+
+    print("\n" + "=" * 70)
+    print("LBM Solver - Headless Recording Pipeline")
+    print("=" * 70)
 
     # Create output directory
     os.makedirs('assignment_3/outputs', exist_ok=True)
 
-    # =========================================================================
-    # Step 1: Visualize Environment Setup
-    # =========================================================================
-    print("\n[1/4] Visualizing environment setup...")
+    # =====================================================================
+    # Step 1: Environment setup image
+    # =====================================================================
+    print("\n[1/4] Saving environment setup image...")
 
     env = KarmannVortex(v0=0.12)
-    print(f"      Environment: KarmannVortex")
-    print(f"      Domain: {env.x_range} × {env.y_range}")
-    print(f"      Obstacle: center={env.circle_center}, radius={env.circle_radius}")
-
     env_vis = EnvironmentVisualizer(env, nx=300, ny=120)
-    fig, ax = env_vis.plot_environment(show_initial_conditions=True)
+    fig, _ = env_vis.plot_environment(show_initial_conditions=True)
     fig.savefig('assignment_3/outputs/01_environment_setup.png', dpi=150, bbox_inches='tight')
-    print(f"      Saved: outputs/01_environment_setup.png")
+    print("      Saved: assignment_3/outputs/01_environment_setup.png")
 
-    # =========================================================================
-    # Step 2: Run Simulation with Live Visualization
-    # =========================================================================
-    print("\n[2/4] Running LBM simulation with live velocity visualization...")
+    # =====================================================================
+    # Step 2: Velocity video (headless)
+    # =====================================================================
+    print("\n[2/4] Recording velocity video (no live visualization)...")
+    vel_viz = VelocityMagnitudeVisualizer(u_inlet=0.12, cmap='viridis')
+    vel_video = 'assignment_3/outputs/02_velocity.mp4'
+    result = _run_and_record(env, vel_viz, vel_video, scaling=5, verbose=True, video_fps=12)
+    print(f"      Saved: {vel_video}")
 
-    scaling =4
-    # Create solver with realistic parameters
-    solver = LBMSolver(
-        environment=env,
-        nx=int(220*scaling),
-        ny=int(41*scaling),
-        u_inlet=0.12,
-        reynolds_number=150,
-        n_steps=10000,  # Full run
-        vis_interval=500,
-        velocity_ramp_tau=1000,
-        inlet_bc = 'regularized',
-        outlet_bc = "open",
-        alpha = 0.995,
-        collision_model='bgk',
-        bc_ramp_tau=1000,
-        outlet_sponge_width=100*scaling/4,
-        outlet_sponge_sigma_max=0.3,
-    )
+    # =====================================================================
+    # Step 3: Vorticity video (headless)
+    # =====================================================================
+    print("\n[3/4] Recording vorticity video (no live visualization)...")
+    vor_viz = VorticityVisualizer(cmap='RdBu_r')
+    vor_video = 'assignment_3/outputs/03_vorticity.mp4'
+    _ = _run_and_record(env, vor_viz, vor_video, scaling=5, verbose=False, video_fps=12)
+    print(f"      Saved: {vor_video}")
 
-    print(f"      Solver configuration:")
-    print(f"        Grid size: {solver.nx} × {solver.ny}")
-    print(f"        Inlet velocity: {solver.u_inlet}")
-    print(f"        Reynolds number: {solver.reynolds_number}")
-    print(f"        Relaxation time (tau): {solver.tau:.6f}")
-    print(f"        Total steps: {solver.n_steps}")
-
-    # Run simulation with velocity magnitude visualization
-    visualizer = VelocityMagnitudeVisualizer(u_inlet=0.12, cmap='viridis')
-
-    print(f"      Running simulation...")
-    result = solver.solve(
-        verbose=True,
-        visualizer=visualizer,
-        record_video=False  # Can enable if FFMpeg available
-    )
-
-    print(f"      Simulation complete!")
-    print(f"      Final state - ux range: [{result['ux'].min():.6f}, {result['ux'].max():.6f}]")
-    print(f"      Final state - uy range: [{result['uy'].min():.6f}, {result['uy'].max():.6f}]")
-    print(f"      Final state - rho range: [{result['rho'].min():.6f}, {result['rho'].max():.6f}]")
-
-    # =========================================================================
-    # Step 3: Generate Multiple Field Visualizations
-    # =========================================================================
-    print("\n[3/4] Generating field visualizations...")
+    # =====================================================================
+    # Step 4: Final-state images + stats
+    # =====================================================================
+    print("\n[4/4] Saving final-state images and statistics...")
 
     ux = result['ux']
     uy = result['uy']
@@ -109,101 +111,42 @@ def main():
     obstacle = result['obstacle']
     metadata = result['metadata']
 
-    # Create plotter for final state visualizations
     plotter = FlowFieldPlotter(
         metadata['nx'],
         metadata['ny'],
         obstacle=obstacle,
         figsize=(22, 4),
-        dpi=100
+        dpi=120,
     )
 
-    # Visualization 1: Velocity Magnitude
-    print("      Generating velocity magnitude field...")
-    vel_viz = VelocityMagnitudeVisualizer(u_inlet=metadata['u_inlet'])
     vel_field = vel_viz.compute_field(ux, uy)
     plotter.plot_field(vel_field, vel_viz, step=metadata['n_steps'])
-    plotter.save('assignment_3/outputs/02_final_velocity.png')
+    plotter.save('assignment_3/outputs/04_final_velocity.png')
 
-    # Visualization 2: Vorticity
-    print("      Generating vorticity field...")
-    vor_viz = VorticityVisualizer(cmap='RdBu_r')
     vor_field = vor_viz.compute_field(ux, uy)
     plotter.plot_field(vor_field, vor_viz, step=metadata['n_steps'])
-    plotter.save('assignment_3/outputs/03_final_vorticity.png')
-
-    # Visualization 3: Pressure (Density)
-    print("      Generating pressure field...")
-    pres_viz = PressureVisualizer(cmap='coolwarm')
-    pres_field = pres_viz.compute_field(ux, uy, rho)
-    plotter.plot_field(pres_field, pres_viz, step=metadata['n_steps'])
-    plotter.save('assignment_3/outputs/04_final_pressure.png')
-
-    # Visualization 4: Streamlines on top of speed magnitude
-    print("      Generating streamline field...")
-    stream_viz = StreamlineVisualizer(cmap='magma', density=1.2, color='white', linewidth=0.8)
-    stream_field = stream_viz.compute_field(ux, uy)
-    plotter.plot_field(stream_field, stream_viz, step=metadata['n_steps'])
-    plotter.save('assignment_3/outputs/05_final_streamlines.png')
+    plotter.save('assignment_3/outputs/05_final_vorticity.png')
 
     plotter.close()
 
-    # =========================================================================
-    # Step 4: Analysis and Statistics
-    # =========================================================================
-    print("\n[4/4] Analyzing results...")
-
-    # Compute field statistics
     speed = np.sqrt(ux**2 + uy**2)
     speed_fluid = speed[~obstacle]
-
-    vorticity = (np.roll(uy, -1, axis=0) - np.roll(uy, 1, axis=0)
-                 - np.roll(ux, -1, axis=1) + np.roll(ux, 1, axis=1))
-    vor_fluid = vorticity[~obstacle]
-
     rho_fluid = rho[~obstacle]
 
-    print(f"\n      Velocity statistics:")
-    print(f"        Mean speed: {speed_fluid.mean():.6f}")
-    print(f"        Max speed: {speed_fluid.max():.6f}")
-    print(f"        Min speed: {speed_fluid.min():.6f}")
-    print(f"        Std dev: {speed_fluid.std():.6f}")
-
-    print(f"\n      Vorticity statistics:")
-    print(f"        Mean: {vor_fluid.mean():.6f}")
-    print(f"        Max: {vor_fluid.max():.6f}")
-    print(f"        Min: {vor_fluid.min():.6f}")
-    print(f"        Std dev: {vor_fluid.std():.6f}")
-
-    print(f"\n      Density statistics:")
-    print(f"        Mean: {rho_fluid.mean():.6f}")
-    print(f"        Max: {rho_fluid.max():.6f}")
-    print(f"        Min: {rho_fluid.min():.6f}")
-    print(f"        Std dev: {rho_fluid.std():.6f}")
-
-    # =========================================================================
-    # Summary
-    # =========================================================================
-    print("\n" + "="*70)
-    print("Complete Visualization Pipeline Summary")
-    print("="*70)
+    print(f"      Mean speed: {speed_fluid.mean():.6f}")
+    print(f"      Max speed: {speed_fluid.max():.6f}")
+    print(f"      Mean density: {rho_fluid.mean():.6f}")
 
     print("\nGenerated files:")
-    print("  1. outputs/01_environment_setup.png  - Initial setup visualization")
-    print("  2. outputs/02_final_velocity.png     - Final velocity magnitude")
-    print("  3. outputs/03_final_vorticity.png    - Final vorticity field")
-    print("  4. outputs/04_final_pressure.png     - Final pressure/density")
-    print("  5. outputs/05_final_streamlines.png  - Final speed + streamlines")
+    print("  - assignment_3/outputs/01_environment_setup.png")
+    print("  - assignment_3/outputs/02_velocity.mp4")
+    print("  - assignment_3/outputs/03_vorticity.mp4")
+    print("  - assignment_3/outputs/04_final_velocity.png")
+    print("  - assignment_3/outputs/05_final_vorticity.png")
 
-    print("\nSimulation metadata:")
-    print(f"  Grid size: {metadata['nx']} × {metadata['ny']}")
-    print(f"  Reynolds number: {metadata['reynolds_number']}")
-    print(f"  Total timesteps: {metadata['n_steps']}")
-    print(f"  Relaxation time: {metadata['tau']:.6f}")
-
-    print("\n" + "="*70)
-    print("Pipeline complete! Check outputs/ directory for generated figures.")
-    print("="*70 + "\n")
+    print("\n" + "=" * 70)
+    print("Headless recording pipeline complete.")
+    print("=" * 70 + "\n")
 
 
 if __name__ == "__main__":

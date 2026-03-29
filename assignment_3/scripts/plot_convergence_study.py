@@ -47,6 +47,19 @@ def setup_plot_style():
     })
 
 
+def _plot_if_present(ax, df: Optional[pd.DataFrame], x_col: str, y_col: str, style: str, label: str) -> bool:
+    """Plot y_col vs x_col only when both columns exist and have finite values."""
+    if df is None or x_col not in df.columns or y_col not in df.columns:
+        return False
+    x = pd.to_numeric(df[x_col], errors="coerce")
+    y = pd.to_numeric(df[y_col], errors="coerce")
+    mask = np.isfinite(x) & np.isfinite(y)
+    if not np.any(mask):
+        return False
+    ax.plot(x[mask], y[mask], style, label=label, linewidth=2, markersize=7)
+    return True
+
+
 def plot_convergence_error(lbm_df: Optional[pd.DataFrame],
                           fdm_df: Optional[pd.DataFrame],
                           fem_df: Optional[pd.DataFrame]) -> None:
@@ -166,6 +179,56 @@ def plot_accuracy_vs_cost(lbm_df: Optional[pd.DataFrame],
     plt.close()
 
 
+def plot_physical_metrics(
+    lbm_df: Optional[pd.DataFrame],
+    fdm_df: Optional[pd.DataFrame],
+    fem_df: Optional[pd.DataFrame],
+) -> None:
+    """Plot selected physical metrics per panel, with all methods overlaid."""
+    metrics = [
+        ("total_kinetic_energy", "Total Kinetic Energy"),
+        ("enstrophy", "Enstrophy"),
+        ("divergence_l2_error", "L2 Divergence Error"),
+        ("runtime_sec", "Computational Cost (Runtime, s)"),
+    ]
+
+    fig, axes = plt.subplots(2, 2, figsize=(10, 10))
+    axes = axes.ravel()
+
+    label_fs = 15
+    title_fs = 16
+    tick_fs = 13
+    legend_fs = 13
+    suptitle_fs = 19
+
+    for ax, (metric, title) in zip(axes, metrics):
+        plotted = False
+        plotted |= _plot_if_present(ax, lbm_df, "ncells", metric, "o-", "LBM")
+        plotted |= _plot_if_present(ax, fdm_df, "ncells", metric, "s-", "FDM")
+        plotted |= _plot_if_present(ax, fem_df, "ncells", metric, "^-", "FEM")
+
+        ax.set_xlabel("Number of cells", fontsize=label_fs)
+        ax.set_ylabel(title, fontsize=label_fs)
+        ax.set_title(title, fontsize=title_fs)
+        ax.tick_params(axis="both", labelsize=tick_fs)
+        ax.grid(True, alpha=0.3)
+        ax.set_xscale("log")
+
+        if metric in ("total_kinetic_energy", "enstrophy", "divergence_l2_error"):
+            ax.set_yscale("log")
+
+        if plotted:
+            ax.legend(fontsize=legend_fs)
+        else:
+            ax.text(0.5, 0.5, "No data", transform=ax.transAxes, ha="center", va="center", fontsize=label_fs)
+
+    fig.suptitle("Metrics by Method", fontsize=suptitle_fs, fontweight="bold")
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
+    fig.savefig(OUTPUT_BASE / "physical_metrics_panels.png", dpi=300, bbox_inches="tight")
+    print(f"✓ Saved: {OUTPUT_BASE / 'physical_metrics_panels.png'}")
+    plt.close()
+
+
 def plot_individual_method(df: pd.DataFrame, method: str) -> None:
     """Plot convergence details for a single method."""
     fig, axes = plt.subplots(2, 2, figsize=(12, 9))
@@ -213,6 +276,47 @@ def plot_individual_method(df: pd.DataFrame, method: str) -> None:
     plt.close()
 
 
+def plot_individual_method_physical(df: pd.DataFrame, method: str) -> None:
+    """Plot per-method physical diagnostics from new metrics."""
+    metrics = [
+        ("total_kinetic_energy", "Total Kinetic Energy"),
+        ("enstrophy", "Enstrophy"),
+        ("max_abs_vorticity", "Max |Vorticity|"),
+        ("integrated_vorticity_magnitude", "Integrated |Vorticity|"),
+        ("divergence_l2_error", "Divergence L2 Error"),
+        ("mass_conservation_error", "Mass Conservation Error"),
+    ]
+
+    fig, axes = plt.subplots(2, 3, figsize=(16, 9))
+    axes = axes.ravel()
+
+    for ax, (metric, title) in zip(axes, metrics):
+        if metric in df.columns:
+            x = pd.to_numeric(df["ncells"], errors="coerce")
+            y = pd.to_numeric(df[metric], errors="coerce")
+            mask = np.isfinite(x) & np.isfinite(y)
+            if np.any(mask):
+                ax.plot(x[mask], y[mask], "o-", linewidth=2, markersize=7)
+                ax.set_xscale("log")
+                if metric in ("total_kinetic_energy", "enstrophy", "max_abs_vorticity", "integrated_vorticity_magnitude"):
+                    ax.set_yscale("log")
+            else:
+                ax.text(0.5, 0.5, "No finite data", transform=ax.transAxes, ha="center", va="center")
+        else:
+            ax.text(0.5, 0.5, "Metric not found", transform=ax.transAxes, ha="center", va="center")
+
+        ax.set_xlabel("Number of cells")
+        ax.set_ylabel(title)
+        ax.set_title(title)
+        ax.grid(True, alpha=0.3)
+
+    fig.suptitle(f"{method.upper()} Physical Diagnostics", fontsize=14, fontweight="bold")
+    plt.tight_layout()
+    fig.savefig(OUTPUT_BASE / f"{method}_physical_metrics.png", dpi=300, bbox_inches="tight")
+    print(f"✓ Saved: {OUTPUT_BASE / f'{method}_physical_metrics.png'}")
+    plt.close()
+
+
 def print_summary_table(lbm_df: Optional[pd.DataFrame],
                        fdm_df: Optional[pd.DataFrame],
                        fem_df: Optional[pd.DataFrame]) -> None:
@@ -235,6 +339,20 @@ def print_summary_table(lbm_df: Optional[pd.DataFrame],
         print(f"  Rel L2(ux) range: {df['rel_l2_ux'].min():.3e} - {df['rel_l2_ux'].max():.3e}")
         print(f"  Rel L2(uy) range: {df['rel_l2_uy'].min():.3e} - {df['rel_l2_uy'].max():.3e}")
         print(f"  Rel L2(rho) range: {df['rel_l2_rho'].min():.3e} - {df['rel_l2_rho'].max():.3e}")
+
+        for col, label in [
+            ("total_kinetic_energy", "Total kinetic energy"),
+            ("enstrophy", "Enstrophy"),
+            ("max_abs_vorticity", "Max |vorticity|"),
+            ("integrated_vorticity_magnitude", "Integrated |vorticity|"),
+            ("divergence_l2_error", "Divergence L2 error"),
+            ("mass_conservation_error", "Mass conservation error"),
+        ]:
+            if col in df.columns:
+                vals = pd.to_numeric(df[col], errors="coerce")
+                vals = vals[np.isfinite(vals)]
+                if len(vals) > 0:
+                    print(f"  {label} range: {vals.min():.3e} - {vals.max():.3e}")
 
 
 def main():
@@ -264,13 +382,17 @@ def main():
     plot_runtime_vs_ncells(lbm_df, fdm_df, fem_df)
     plot_throughput(lbm_df, fdm_df, fem_df)
     plot_accuracy_vs_cost(lbm_df, fdm_df, fem_df)
+    plot_physical_metrics(lbm_df, fdm_df, fem_df)
 
     if lbm_df is not None:
         plot_individual_method(lbm_df, "lbm")
+        plot_individual_method_physical(lbm_df, "lbm")
     if fdm_df is not None:
         plot_individual_method(fdm_df, "fdm")
+        plot_individual_method_physical(fdm_df, "fdm")
     if fem_df is not None:
         plot_individual_method(fem_df, "fem")
+        plot_individual_method_physical(fem_df, "fem")
 
     # Summary
     print_summary_table(lbm_df, fdm_df, fem_df)

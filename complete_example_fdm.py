@@ -45,14 +45,15 @@ def main():
 
     # Physical/environment settings
     inlet_velocity = 0.12
-    reynolds_number = 400.0     
+    reynolds_number = 150.0 #was 400
     fallback_viscosity = 0.001   # used only if reynolds_number=None
 
     # Grid / solver settings
-    nx = 301
-    ny = 120
+    nx = 220 # was 301
+    ny = 41 # was 120
     dt = 1e-1
-    n_steps = 4000
+    n_steps = 10000
+    final_time = 100.0
 
     # Pressure solver: "bicgstab", "cg", or "amg"
     poisson_method = "amg"
@@ -112,7 +113,7 @@ def main():
         convection_order="second", 
         outlet_bc="zero_gradient",
         outlet_convection_speed=None,  # used for convective outlet BC
-
+        target_physical_time=final_time,
 
     )
 

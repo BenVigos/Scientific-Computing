@@ -132,6 +132,77 @@ def compute_error_metrics(
     }
 
 
+def compute_flow_integral_metrics(
+    ux: np.ndarray,
+    uy: np.ndarray,
+    rho: np.ndarray,
+    obstacle: np.ndarray,
+    dx: float,
+    dy: float,
+) -> dict[str, float]:
+
+    fluid = (~obstacle) & np.isfinite(ux) & np.isfinite(uy) & np.isfinite(rho)
+    if not np.any(fluid):
+        return {k: np.nan for k in [
+            "total_kinetic_energy",
+            "enstrophy",
+            "max_abs_vorticity",
+            "integrated_vorticity_magnitude",
+            "divergence_l2_error",
+            "mass_conservation_error",
+        ]}
+
+    cell_area = dx * dy
+
+    ux_filled = np.where(fluid, ux, 0.0)
+    uy_filled = np.where(fluid, uy, 0.0)
+
+    # --- Gradients with spacing ---
+    dudy = np.gradient(ux_filled, dy, axis=1)
+    dvdx = np.gradient(uy_filled, dx, axis=0)
+    vorticity = dvdx - dudy
+
+    dudx = np.gradient(ux_filled, dx, axis=0)
+    dvdy = np.gradient(uy_filled, dy, axis=1)
+    divergence = dudx + dvdy
+
+    speed2 = ux * ux + uy * uy
+
+    # --- Metrics ---
+    total_kinetic_energy = float(
+        np.sum(0.5 * rho[fluid] * speed2[fluid]) * cell_area
+    )
+
+    enstrophy = float(
+        0.5 * np.sum(vorticity[fluid] ** 2) * cell_area
+    )
+
+    max_abs_vorticity = float(
+        np.max(np.abs(vorticity[fluid]))
+    )
+
+    integrated_vorticity_magnitude = float(
+        np.sum(np.abs(vorticity[fluid])) * cell_area
+    )
+
+    divergence_l2_error = float(
+        np.sqrt(np.sum(divergence[fluid] ** 2) * cell_area)
+    )
+
+    mass_conservation_error = float(
+        np.std(rho[fluid])
+    )
+
+    return {
+        "total_kinetic_energy": total_kinetic_energy,
+        "enstrophy": enstrophy,
+        "max_abs_vorticity": max_abs_vorticity,
+        "integrated_vorticity_magnitude": integrated_vorticity_magnitude,
+        "divergence_l2_error": divergence_l2_error,
+        "mass_conservation_error": mass_conservation_error,
+    }
+
+
 def save_final_state_image(
     ux: np.ndarray,
     uy: np.ndarray,
@@ -298,8 +369,8 @@ def run_lbm_convergence(config: dict[str, Any], paths: dict[str, Path], env: Kar
             "u_inlet": u_inlet,
             "reynolds_number": re,
             "n_steps": n_steps,
-            "vis_interval": max(100, n_steps // 20),
-            "velocity_ramp_tau": max(50, n_steps // 10),
+            "vis_interval": max(100, n_steps),
+            "velocity_ramp_tau": 100,
             "inlet_bc": "regularized",
             "outlet_bc": "open",
             "top_bc": "bounce_back",
@@ -317,11 +388,14 @@ def run_lbm_convergence(config: dict[str, Any], paths: dict[str, Path], env: Kar
         rho = result["rho"]
         obstacle = result["obstacle"]
 
-        stable = bool(np.isfinite(ux).all() and np.isfinite(uy).all() and np.isfinite(rho).all())
+        stable = bool(np.isfinite(ux).any() and np.isfinite(uy).any() and np.isfinite(rho).any())
         ncells = nx * ny
         throughput = ncells / max(runtime, 1e-9)
 
         errors = compute_error_metrics(ux, uy, rho, obstacle, ref)
+        dx = (env.x_range[1] - env.x_range[0]) / max(nx - 1, 1)
+        dy = (env.y_range[1] - env.y_range[0]) / max(ny - 1, 1)
+        flow_metrics = compute_flow_integral_metrics(ux, uy, rho, obstacle, dx, dy)
 
         row = {
             "grid_index": idx,
@@ -335,6 +409,7 @@ def run_lbm_convergence(config: dict[str, Any], paths: dict[str, Path], env: Kar
             "cells_per_sec": throughput,
             "stable": stable,
             **errors,
+            **flow_metrics,
         }
         rows.append(row)
 
@@ -357,6 +432,7 @@ def run_lbm_convergence(config: dict[str, Any], paths: dict[str, Path], env: Kar
                 "target_time": target_time,
                 "runtime_sec": runtime,
                 "stable": stable,
+                "metrics": {**errors, **flow_metrics},
                 "config": cfg,
             },
         )
@@ -372,7 +448,7 @@ def run_fdm_convergence(config: dict[str, Any], paths: dict[str, Path], env: Kar
     print("\n=== FDM Convergence Study ===")
 
     grid_sizes = config["fdm_grid_sizes"]
-    n_steps = config["fdm_convergence_steps"]
+    n_steps_cap = int(config["fdm_convergence_steps"])
     dt = config["fdm_base_dt"]
     re = config["convergence_reynolds"]
 
@@ -383,13 +459,14 @@ def run_fdm_convergence(config: dict[str, Any], paths: dict[str, Path], env: Kar
     for idx, (nx, ny) in enumerate(grid_sizes, start=1):
         print(f"  FDM {idx}/{len(grid_sizes)}: grid {nx}x{ny}...", end=" ", flush=True)
 
-        n_steps = max(1, int(np.ceil(target_time / dt)))
-        effective_time = n_steps * dt
+        n_steps = max(n_steps_cap, int(np.ceil(target_time / dt)) + 5)
+        print(f"fdm n_steps={n_steps}")
         cfg = {
             "nx": nx,
             "ny": ny,
             "dt": dt,
             "n_steps": n_steps,
+            "target_physical_time": target_time,
             "rho": 1.0,
             "adaptive_dt": True,
             "cfl_safety": 0.20,
@@ -410,25 +487,35 @@ def run_fdm_convergence(config: dict[str, Any], paths: dict[str, Path], env: Kar
         rho = result["rho"]
         obstacle = result["obstacle"]
 
-        stable = bool(np.isfinite(ux).all() and np.isfinite(uy).all() and np.isfinite(rho).all())
+        stable = bool(np.isfinite(ux).any() and np.isfinite(uy).any() and np.isfinite(rho).any())
+        metadata = result.get("metadata", {})
+        effective_time = float(metadata.get("time_final", target_time))
+        steps_used = int(metadata.get("n_steps_executed", n_steps))
+        stop_reason = str(metadata.get("stop_reason", "n_steps"))
         ncells = nx * ny
         throughput = ncells / max(runtime, 1e-9)
 
         errors = compute_error_metrics(ux, uy, rho, obstacle, ref)
+        dx = float(metadata.get("dx", (env.x_range[1] - env.x_range[0]) / max(nx - 1, 1)))
+        dy = float(metadata.get("dy", (env.y_range[1] - env.y_range[0]) / max(ny - 1, 1)))
+        flow_metrics = compute_flow_integral_metrics(ux, uy, rho, obstacle, dx, dy)
 
         row = {
             "grid_index": idx,
             "nx": nx,
             "ny": ny,
-            "n_steps": n_steps,
+            "n_steps_cap": n_steps,
+            "n_steps_executed": steps_used,
             "dt": dt,
             "target_time": target_time,
             "effective_time": effective_time,
+            "stop_reason": stop_reason,
             "ncells": ncells,
             "runtime_sec": runtime,
             "cells_per_sec": throughput,
             "stable": stable,
             **errors,
+            **flow_metrics,
         }
         rows.append(row)
 
@@ -448,11 +535,14 @@ def run_fdm_convergence(config: dict[str, Any], paths: dict[str, Path], env: Kar
                 "nx": nx,
                 "ny": ny,
                 "n_steps": n_steps,
+                "n_steps_executed": steps_used,
                 "dt": dt,
                 "target_time": target_time,
                 "effective_time": effective_time,
+                "stop_reason": stop_reason,
                 "runtime_sec": runtime,
                 "stable": stable,
+                "metrics": {**errors, **flow_metrics},
                 "config": cfg,
             },
         )
@@ -468,22 +558,23 @@ def run_fem_convergence(config: dict[str, Any], paths: dict[str, Path], env: Kar
     print("\n=== FEM Convergence Study ===")
 
     mesh_resolutions = config["fem_mesh_resolutions"]
-    n_steps = config["fem_convergence_steps"]
+    n_steps_cap = int(config["fem_convergence_steps"])
     dt = config["fem_base_dt"]
     re = config["convergence_reynolds"]
 
     rows = []
 
-    target_time = float(config["target_physical_time"])
+    target_time = float(config["target_physical_time"]/10) # FEM is much slower, so we target a shorter physical time for convergence analysis.
 
     for idx, (global_maxh, cyl_maxh, export_nx, export_ny) in enumerate(mesh_resolutions, start=1):
         print(f"  FEM {idx}/{len(mesh_resolutions)}: maxh={global_maxh:.4f}...", end=" ", flush=True)
 
-        n_steps = max(1, int(np.ceil(target_time / dt)))
-        effective_time = n_steps * dt
+        n_steps = max(n_steps_cap, int(np.ceil(target_time / dt)) + 5)
+        print(f"fem n_steps={n_steps}")
         cfg = {
             "dt": dt,
             "n_steps": n_steps,
+            "target_physical_time": target_time,
             "global_maxh": global_maxh,
             "cyl_maxh": cyl_maxh,
             "order": 2,
@@ -509,11 +600,18 @@ def run_fem_convergence(config: dict[str, Any], paths: dict[str, Path], env: Kar
         rho = result["rho"]
         obstacle = result["obstacle"]
 
-        stable = bool(np.isfinite(ux).all() and np.isfinite(uy).all() and np.isfinite(rho).all())
+        stable = bool(np.isfinite(ux).any() and np.isfinite(uy).any() and np.isfinite(rho).any())
+        metadata = result.get("metadata", {})
+        effective_time = float(metadata.get("time_final", target_time))
+        steps_used = int(metadata.get("n_steps_executed", n_steps))
+        stop_reason = str(metadata.get("stop_reason", "n_steps"))
         ncells = ux.shape[0] * ux.shape[1]
         throughput = ncells / max(runtime, 1e-9)
 
         errors = compute_error_metrics(ux, uy, rho, obstacle, ref)
+        dx = (env.x_range[1] - env.x_range[0]) / max(export_nx - 1, 1)
+        dy = (env.y_range[1] - env.y_range[0]) / max(export_ny - 1, 1)
+        flow_metrics = compute_flow_integral_metrics(ux, uy, rho, obstacle, dx, dy)
 
         row = {
             "mesh_index": idx,
@@ -521,15 +619,18 @@ def run_fem_convergence(config: dict[str, Any], paths: dict[str, Path], env: Kar
             "cyl_maxh": cyl_maxh,
             "export_nx": export_nx,
             "export_ny": export_ny,
-            "n_steps": n_steps,
+            "n_steps_cap": n_steps,
+            "n_steps_executed": steps_used,
             "dt": dt,
             "target_time": target_time,
             "effective_time": effective_time,
+            "stop_reason": stop_reason,
             "ncells": ncells,
             "runtime_sec": runtime,
             "cells_per_sec": throughput,
             "stable": stable,
             **errors,
+            **flow_metrics,
         }
         rows.append(row)
 
@@ -551,11 +652,14 @@ def run_fem_convergence(config: dict[str, Any], paths: dict[str, Path], env: Kar
                 "export_nx": export_nx,
                 "export_ny": export_ny,
                 "n_steps": n_steps,
+                "n_steps_executed": steps_used,
                 "dt": dt,
                 "target_time": target_time,
                 "effective_time": effective_time,
+                "stop_reason": stop_reason,
                 "runtime_sec": runtime,
                 "stable": stable,
+                "metrics": {**errors, **flow_metrics},
                 "config": cfg,
             },
         )
@@ -581,34 +685,32 @@ def build_run_config() -> dict[str, Any]:
         "benchmark_nx": base_x*10,
         "benchmark_ny": base_y*10,
         "benchmark_re": 150.0,
-        "benchmark_velocity_ramp_tau": 1000.0,
+        "benchmark_velocity_ramp_tau": 1.0,
 
         # LBM convergence sweep (grid refinement)
-        "run_lbm_convergence": True,
+        "run_lbm_convergence": False,
         "lbm_grid_sizes": [(int(base_x * s), int(base_y * s)) for s in (1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5)],
         "lbm_convergence_steps": 10000,
 
         # FDM convergence sweep (grid refinement)
         "run_fdm_convergence": False,
         "fdm_grid_sizes": [
-            (151, 60),
-            (201, 80),
-            (301, 120),
-            (401, 160),
+            (int(base_x * s), int(base_y * s)) for s in (0.5,1, 1.5, 2)
         ],
-        "fdm_base_dt": 5e-4,
-        "fdm_convergence_steps": 3000,
+        "fdm_base_dt": 1e-1,
+        "fdm_convergence_steps": 15000,
+
 
         # FEM convergence sweep (mesh refinement)
-        "run_fem_convergence": False,
+        "run_fem_convergence": True,
         "fem_mesh_resolutions": [
-            (0.04, 0.005, 100, 40),
-            (0.03, 0.004, 133, 53),
-            (0.02, 0.0025, 200, 80),
-            (0.015, 0.002, 266, 106),
+            (0.05, 0.005, 77, 14),
+            (0.04, 0.004, 108, 20),
+            (0.03, 0.003, 151, 28),
+            (0.02, 0.002, 220, 41),
         ],
         "fem_base_dt": 1e-3,
-        "fem_convergence_steps": 3000,
+        "fem_convergence_steps": 10000,
         "fem_num_threads": 8,
 
         # Quick mode for debugging

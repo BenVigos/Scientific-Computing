@@ -218,12 +218,12 @@ def _compute_ramped_value(step, target, tau_ramp):
 
 
 @njit(cache=True)
-def _inlet_zou_he_kernel(f, u_inlet, c, w):
+def _inlet_zou_he_kernel(f, u_inlet_profile, c, w):
     _, ny, _ = f.shape
     for y in range(ny):
+        ux = u_inlet_profile[y]
         rho_in = ((f[0, y, 0] + f[0, y, 2] + f[0, y, 4])
-                  + 2.0 * (f[0, y, 3] + f[0, y, 6] + f[0, y, 7])) / (1.0 - u_inlet)
-        ux = u_inlet
+                  + 2.0 * (f[0, y, 3] + f[0, y, 6] + f[0, y, 7])) / (1.0 - ux)
         uy = 0.0
         usqr = ux * ux + uy * uy
 
@@ -238,16 +238,17 @@ def _inlet_zou_he_kernel(f, u_inlet, c, w):
 
 
 @njit(cache=True)
-def _inlet_regularized_kernel(f, u_inlet, c, w):
+def _inlet_regularized_kernel(f, u_inlet_profile, c, w):
     _, ny, _ = f.shape
     for y in range(ny):
+        ux = u_inlet_profile[y]
         rho_in = ((f[0, y, 0] + f[0, y, 2] + f[0, y, 4])
-                  + 2.0 * (f[0, y, 3] + f[0, y, 6] + f[0, y, 7])) / (1.0 - u_inlet)
+                  + 2.0 * (f[0, y, 3] + f[0, y, 6] + f[0, y, 7])) / (1.0 - ux)
 
         feq = np.empty(9, dtype=np.float64)
         for i in range(9):
-            cu = c[i, 0] * u_inlet
-            feq[i] = w[i] * rho_in * (1.0 + 3.0 * cu + 4.5 * cu * cu - 1.5 * u_inlet * u_inlet)
+            cu = c[i, 0] * ux
+            feq[i] = w[i] * rho_in * (1.0 + 3.0 * cu + 4.5 * cu * cu - 1.5 * ux * ux)
 
         f[0, y, 1] = feq[1] + (f[0, y, 3] - feq[3])
         f[0, y, 5] = feq[5] + (f[0, y, 7] - feq[7])
@@ -2163,12 +2164,12 @@ class LBMSolver(Solver):
         """Apply open outlet boundary condition at x=Nx-1 (zero-gradient)."""
         _outlet_open_kernel(f)
 
-    def _apply_inlet_boundary(self, f, u_inlet):
-        """Apply selected inlet BC model."""
+    def _apply_inlet_boundary(self, f, u_inlet_profile):
+        """Apply selected inlet BC model with a y-dependent profile."""
         if self.inlet_bc == "regularized":
-            _inlet_regularized_kernel(f, u_inlet, self.c, self.w)
+            _inlet_regularized_kernel(f, u_inlet_profile, self.c, self.w)
         else:
-            _inlet_zou_he_kernel(f, u_inlet, self.c, self.w)
+            _inlet_zou_he_kernel(f, u_inlet_profile, self.c, self.w)
 
     def _apply_outlet_boundary(self, f, rho_target=1.0):
         """Apply selected outlet BC model."""
@@ -2185,7 +2186,7 @@ class LBMSolver(Solver):
         if self.bottom_bc == "bounce_back":
             _bottom_bounce_back_wall_kernel(f)
 
-    def solve(self, verbose=True, visualizer=None, record_video=False, video_filename='lbm_simulation.mp4'):
+    def solve(self, verbose=True, visualizer=None, record_video=False, video_filename='lbm_simulation.mp4', video_fps=15):
         """
         Run the LBM simulation for Navier-Stokes equations.
 
@@ -2266,7 +2267,7 @@ class LBMSolver(Solver):
             from visualization import SimulationVisualizer
             sim_visualizer = SimulationVisualizer(
                 self.nx, self.ny, self.obstacle,
-                fps=30, record_video=record_video,
+                fps=video_fps, record_video=record_video,
                 video_filename=video_filename
             )
             sim_visualizer.setup(visualizer)
@@ -2276,8 +2277,9 @@ class LBMSolver(Solver):
             print(f"\nRunning {self.n_steps} timesteps...\n")
 
         for step in range(1, self.n_steps + 1):
-            # Compute ramped inlet velocity for smooth initialization
+            # Compute ramped inlet velocity scale for smooth initialization
             u_inlet_ramped = _compute_ramped_velocity(step, self.u_inlet, self.velocity_ramp_tau)
+            u_inlet_profile_ramped = 4.0 * u_inlet_ramped * y / self.ny * (1.0 - y / self.ny)
             # Ramp boundary non-equilibrium scale similarly
             if self.collision_model == "trt":
                 bc_neq_scale = _compute_ramped_value(step, self.neq_reflection_scale, self.bc_ramp_tau)
@@ -2314,9 +2316,9 @@ class LBMSolver(Solver):
             self._apply_outlet_boundary(f)
 
             if self.inlet_bc == "regularized":
-                _inlet_regularized_kernel(f, u_inlet_ramped, self.c, self.w)
+                _inlet_regularized_kernel(f, u_inlet_profile_ramped, self.c, self.w)
             else:
-                _inlet_zou_he_kernel(f, u_inlet_ramped, self.c, self.w)
+                _inlet_zou_he_kernel(f, u_inlet_profile_ramped, self.c, self.w)
 
             self._apply_top_bottom_boundaries(f)
 
