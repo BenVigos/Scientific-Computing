@@ -1,0 +1,27 @@
+{
+  "method": "lbm_benchmark",
+  "nx": 2200,
+  "ny": 410,
+  "target_time": 100.0,
+  "runtime_sec": 1049.0482892,
+  "used_cache": true,
+  "config": {
+    "nx": 2200,
+    "ny": 410,
+    "u_inlet": 0.12,
+    "reynolds_number": 150.0,
+    "n_steps": 18762,
+    "vis_interval": 938,
+    "velocity_ramp_tau": 1.0,
+    "inlet_bc": "regularized",
+    "outlet_bc": "open",
+    "top_bc": "bounce_back",
+    "bottom_bc": "bounce_back",
+    "collision_model": "bgk",
+    "trt_lambda": 0.25,
+    "alpha": 1.0,
+    "use_outlet_sponge": true,
+    "outlet_sponge_width": 220,
+    "outlet_sponge_sigma_max": 0.3
+  }
+}

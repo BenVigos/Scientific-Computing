@@ -1,0 +1,22 @@
+{
+  "config": {
+    "nx": 120,
+    "ny": 48,
+    "u_inlet": 0.12,
+    "reynolds_number": 700.0,
+    "n_steps": 250,
+    "vis_interval": 100,
+    "velocity_ramp_tau": 600.0,
+    "inlet_bc": "regularized",
+    "outlet_bc": "zou_he_pressure",
+    "top_bc": "bounce_back",
+    "bottom_bc": "bounce_back",
+    "collision_model": "trt",
+    "trt_lambda": 0.25,
+    "alpha": 1.0,
+    "use_outlet_sponge": true,
+    "outlet_sponge_width": 7,
+    "outlet_sponge_sigma_max": 0.2
+  },
+  "runtime_sec": 0.9415225000120699
+}
