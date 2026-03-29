@@ -355,7 +355,9 @@ class FEMSolver(Solver):
         curved_order=None,
         probe_point=(0.6, 0.21),
         num_threads=None,
-        inverse_name="umfpack",
+        inverse_name="cg",
+        preconditioner_name="amg",
+        target_physical_time=None,
         verbose=True,
     ):
         if not _NGSOLVE_AVAILABLE:
@@ -379,7 +381,13 @@ class FEMSolver(Solver):
         self.probe_point = tuple(probe_point)
         self.num_threads = num_threads
         self.inverse_name = str(inverse_name)
+        self.preconditioner_name = str(preconditioner_name)
         self.verbose = bool(verbose)
+        self.target_physical_time = (
+            None if target_physical_time is None else float(target_physical_time)
+        )
+        if self.target_physical_time is not None and self.target_physical_time <= 0.0:
+            raise ValueError("target_physical_time must be positive when provided.")
 
         self.v0 = float(environment.v0)
 
@@ -558,10 +566,10 @@ class FEMSolver(Solver):
         if self.verbose:
             print("  Building constant implicit inverse...")
 
-        # factorize once
+        # Use CG solver with AMG preconditioner
         self.inv_astar = self.astar.mat.Inverse(
             freedofs=self.freedofs,
-            inverse=self.inverse_name,
+            inverse="pardiso",
         )
 
   
@@ -595,7 +603,7 @@ class FEMSolver(Solver):
         sol = GridFunction(self.X)
         sol.vec.data = a0.mat.Inverse(
             freedofs=self.freedofs,
-            inverse=self.inverse_name,
+            inverse="pardiso",
         ) * f0.vec
         sol.vec.data += self.gfd.vec
         sol.vec[self.pressure_pin_dof] = 0.0
@@ -654,6 +662,11 @@ class FEMSolver(Solver):
         self.gfu.vec.data = sol.vec
         self.gfu_prev.vec.data = self.gfu_u.vec
         self.time += self.dt
+
+    def _target_time_reached(self):
+        if self.target_physical_time is None:
+            return False
+        return self.time >= self.target_physical_time - 1e-14
 
     # ------------------------------------------------------------------
     # Diagnostics
@@ -749,6 +762,8 @@ class FEMSolver(Solver):
             print(f"  Grad-div gamma    : {self.graddiv_gamma}")
             print(f"  Probe point       : {self.probe_point}")
             print(f"  Threads           : {self.num_threads}")
+            if self.target_physical_time is not None:
+                print(f"  Target physical t : {self.target_physical_time}")
             print()
 
         sim_visualizer = None
@@ -775,13 +790,22 @@ class FEMSolver(Solver):
         }
 
         last_u_max_sampled = np.nan
+        stop_reason = "n_steps"
+        steps_executed = 0
 
         for step in range(1, self.n_steps + 1):
-            self._single_step()
+            if self._target_time_reached():
+                stop_reason = "target_physical_time"
+                break
 
-            do_history = return_history and (step % history_every == 0 or step == 1 or step == self.n_steps)
-            do_visual = sim_visualizer is not None and (step % visualize_every == 0)
-            do_print = self.verbose and (step % history_every == 0 or step == 1 or step == self.n_steps)
+            self._single_step()
+            steps_executed = step
+            hit_target_time = self._target_time_reached()
+            is_last_step = (step == self.n_steps) or hit_target_time
+
+            do_history = return_history and (step % history_every == 0 or step == 1 or is_last_step)
+            do_visual = sim_visualizer is not None and (step % visualize_every == 0 or is_last_step)
+            do_print = self.verbose and (step % history_every == 0 or step == 1 or is_last_step)
 
             if do_visual:
                 ux, uy, p, _ = self._to_structured_grid(export_nx, export_ny)
@@ -818,6 +842,10 @@ class FEMSolver(Solver):
 
                 last_u_max_sampled = np.nan
 
+            if hit_target_time:
+                stop_reason = "target_physical_time"
+                break
+
         if sim_visualizer is not None:
             sim_visualizer.finalize()
 
@@ -837,6 +865,9 @@ class FEMSolver(Solver):
                 "pressure_dofs": self.Q.ndof,
                 "dt": self.dt,
                 "n_steps": self.n_steps,
+                "n_steps_executed": steps_executed,
+                "stop_reason": stop_reason,
+                "target_physical_time": self.target_physical_time,
                 "time_final": self.time,
                 "nu": self.nu,
                 "rho": self.rho,
@@ -914,6 +945,7 @@ class FDMSolver(Solver):
         inlet_perturbation=1e-3,
         velocity_ramp_tau=None,
         inlet_strip_fraction=0.091,
+        target_physical_time=None,
     ):
         """
         Initialize the finite-difference solver.
@@ -986,8 +1018,11 @@ class FDMSolver(Solver):
             else max(100.0 * self.dt, 0.1)
         )
         self.inlet_strip_fraction = float(inlet_strip_fraction)
-        
-        
+        self.target_physical_time = (
+            None if target_physical_time is None else float(target_physical_time)
+        )
+        if self.target_physical_time is not None and self.target_physical_time <= 0.0:
+            raise ValueError("target_physical_time must be positive when provided.")
 
         self.convection_order = str(convection_order).lower()
         if self.convection_order not in ("first", "second"):
@@ -1071,12 +1106,10 @@ class FDMSolver(Solver):
         self._apply_velocity_bc(self.u, self.v, dt=self.dt)
         self._apply_pressure_bc(self.p)
 
-    
     def _ramped_inlet_speed(self, time):
         if self.velocity_ramp_tau is None or self.velocity_ramp_tau <= 0.0:
             return self.environment.v0
         return self.environment.v0 * (1.0 - np.exp(-time / self.velocity_ramp_tau))
-
 
     def _inlet_profile_values(self, time):
         """
@@ -1532,6 +1565,22 @@ class FDMSolver(Solver):
 
         return min(self.dt, dt_adv, dt_diff)
 
+    def _remaining_target_time(self):
+        if self.target_physical_time is None:
+            return None
+        return self.target_physical_time - self.time
+
+    def _target_time_reached(self):
+        if self.target_physical_time is None:
+            return False
+        return self.time >= self.target_physical_time - 1e-14
+
+    def _clip_dt_to_target(self, dt_candidate):
+        remaining = self._remaining_target_time()
+        if remaining is None:
+            return dt_candidate
+        return min(dt_candidate, max(0.0, remaining))
+
     def _build_source_arrays(self):
         """
         Evaluate external forcing from the environment.
@@ -1710,9 +1759,7 @@ class FDMSolver(Solver):
         visualize_every=50,
         return_history=True,
     ):
-        """
-        Run the finite-difference Navier–Stokes simulation.
-        """
+        """Run the finite-difference Navier-Stokes simulation."""
         sim_visualizer = None
         if visualizer is not None:
             from visualization import SimulationVisualizer
@@ -1750,6 +1797,8 @@ class FDMSolver(Solver):
                 print(f"  PyAMG available: {HAVE_PYAMG}")
             if self.poisson_method in ("bicgstab", "cg"):
                 print(f"  ILU preconditioner: {'yes' if self.M_pressure is not None else 'no'}")
+            if self.target_physical_time is not None:
+                print(f"  Target physical time: {self.target_physical_time}")
 
         history = {
             "time": [],
@@ -1761,10 +1810,24 @@ class FDMSolver(Solver):
             "p_max": [],
         }
 
+        stop_reason = "n_steps"
+        steps_executed = 0
+
         for step in range(1, self.n_steps + 1):
-            dt = self._compute_dt()
+            if self._target_time_reached():
+                stop_reason = "target_physical_time"
+                break
+
+            dt = self._clip_dt_to_target(self._compute_dt())
+            if dt <= 0.0:
+                stop_reason = "target_physical_time"
+                break
+
             self._single_step(dt)
+            steps_executed = step
             diag = self._diagnostics()
+            hit_target_time = self._target_time_reached()
+            is_last_step = (step == self.n_steps) or hit_target_time
 
             if return_history:
                 history["time"].append(diag["time"])
@@ -1775,7 +1838,7 @@ class FDMSolver(Solver):
                 history["div_inf"].append(diag["div_inf"])
                 history["p_max"].append(diag["p_max"])
 
-            if verbose and (step == 1 or step % 1000 == 0):
+            if verbose and (step == 1 or step % 1000 == 0 or is_last_step):
                 print(
                     f"step={step:6d}/{self.n_steps}  "
                     f"t={diag['time']:.5f}  "
@@ -1785,9 +1848,13 @@ class FDMSolver(Solver):
                     f"|p|max={diag['p_max']:.3e}"
                 )
 
-            if sim_visualizer is not None and step % visualize_every == 0:
+            if sim_visualizer is not None and (step % visualize_every == 0 or is_last_step):
                 field = visualizer.compute_field(self.u, self.v, self.p)
                 sim_visualizer.update(field, step)
+
+            if hit_target_time:
+                stop_reason = "target_physical_time"
+                break
 
         if sim_visualizer is not None:
             sim_visualizer.finalize()
@@ -1807,6 +1874,9 @@ class FDMSolver(Solver):
                 "adaptive_dt": self.adaptive_dt,
                 "time_final": self.time,
                 "n_steps": self.n_steps,
+                "n_steps_executed": steps_executed,
+                "stop_reason": stop_reason,
+                "target_physical_time": self.target_physical_time,
                 "rho": self.rho,
                 "nu": self.nu,
                 "u_inlet": float(self.environment.v0),

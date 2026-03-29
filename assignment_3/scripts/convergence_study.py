@@ -61,6 +61,9 @@ def ensure_dirs(base: Path) -> dict[str, Path]:
         "lbm_convergence": base / "lbm_convergence",
         "fdm_convergence": base / "fdm_convergence",
         "fem_convergence": base / "fem_convergence",
+        "lbm_states": base / "lbm_convergence" / "states",
+        "fdm_states": base / "fdm_convergence" / "states",
+        "fem_states": base / "fem_convergence" / "states",
         "outputs": ROOT / "assignment_3" / "outputs" / "convergence_study",
         "lbm_images": ROOT / "assignment_3" / "outputs" / "convergence_study" / "lbm_final_states",
         "fdm_images": ROOT / "assignment_3" / "outputs" / "convergence_study" / "fdm_final_states",
@@ -157,6 +160,27 @@ def save_final_state_image(
     plt.close(fig)
 
 
+def save_final_state_data(
+    ux: np.ndarray,
+    uy: np.ndarray,
+    rho: np.ndarray,
+    obstacle: np.ndarray,
+    out_file: Path,
+    metadata: dict[str, Any],
+) -> None:
+    """Save full final state and small metadata snapshot for offline metrics."""
+    np.savez_compressed(
+        out_file,
+        ux=ux,
+        uy=uy,
+        rho=rho,
+        obstacle=obstacle,
+    )
+    meta_file = out_file.with_suffix(".json")
+    with open(meta_file, "w", encoding="ascii") as f:
+        json.dump(metadata, f, indent=2, default=float)
+
+
 def run_lbm(env: KarmannVortex, cfg: dict[str, Any]) -> dict[str, Any]:
     solver = LBMSolver(environment=env, **cfg)
     result = solver.solve(verbose=False)
@@ -187,6 +211,12 @@ def run_with_timer(
     t0 = time.perf_counter()
     out = run_fn(env, cfg)
     return out, time.perf_counter() - t0
+
+
+def lbm_steps_for_target_time(nx: int, target_time: float) -> int:
+    """LBM step mapping requested by user: n_steps = nx * T / (2.2 * 5.33)."""
+    steps = nx * target_time / (2.2 * 5.33)
+    return max(1, int(round(steps)))
 
 
 def load_cached_benchmark(benchmark_dir: Path) -> dict[str, np.ndarray] | None:
@@ -255,10 +285,13 @@ def run_lbm_convergence(config: dict[str, Any], paths: dict[str, Path], env: Kar
 
     rows = []
 
+    target_time = float(config["target_physical_time"])
+
     for idx, (nx, ny) in enumerate(grid_sizes, start=1):
         print(f"  LBM {idx}/{len(grid_sizes)}: grid {nx}x{ny}...", end=" ", flush=True)
 
         sponge_width = max(0, int(0.1 * nx))
+        n_steps = lbm_steps_for_target_time(nx, target_time)
         cfg = {
             "nx": nx,
             "ny": ny,
@@ -266,7 +299,7 @@ def run_lbm_convergence(config: dict[str, Any], paths: dict[str, Path], env: Kar
             "reynolds_number": re,
             "n_steps": n_steps,
             "vis_interval": max(100, n_steps // 20),
-            "velocity_ramp_tau": n_steps // 10,
+            "velocity_ramp_tau": max(50, n_steps // 10),
             "inlet_bc": "regularized",
             "outlet_bc": "open",
             "top_bc": "bounce_back",
@@ -294,6 +327,9 @@ def run_lbm_convergence(config: dict[str, Any], paths: dict[str, Path], env: Kar
             "grid_index": idx,
             "nx": nx,
             "ny": ny,
+            "n_steps": n_steps,
+            "target_time": target_time,
+            "effective_time": target_time,
             "ncells": ncells,
             "runtime_sec": runtime,
             "cells_per_sec": throughput,
@@ -304,6 +340,26 @@ def run_lbm_convergence(config: dict[str, Any], paths: dict[str, Path], env: Kar
 
         image_file = paths["lbm_images"] / f"lbm_run_{idx:03d}_{nx}x{ny}.png"
         save_final_state_image(ux, uy, obstacle, image_file, f"LBM final state - {nx}x{ny}")
+
+        state_file = paths["lbm_states"] / f"lbm_run_{idx:03d}_{nx}x{ny}.npz"
+        save_final_state_data(
+            ux,
+            uy,
+            rho,
+            obstacle,
+            state_file,
+            metadata={
+                "method": "lbm",
+                "grid_index": idx,
+                "nx": nx,
+                "ny": ny,
+                "n_steps": n_steps,
+                "target_time": target_time,
+                "runtime_sec": runtime,
+                "stable": stable,
+                "config": cfg,
+            },
+        )
         print(f"t={runtime:.2f}s, L2_ux={errors['rel_l2_ux']:.3e}, stable={stable}")
 
     df = pd.DataFrame(rows)
@@ -322,9 +378,13 @@ def run_fdm_convergence(config: dict[str, Any], paths: dict[str, Path], env: Kar
 
     rows = []
 
+    target_time = float(config["target_physical_time"])
+
     for idx, (nx, ny) in enumerate(grid_sizes, start=1):
         print(f"  FDM {idx}/{len(grid_sizes)}: grid {nx}x{ny}...", end=" ", flush=True)
 
+        n_steps = max(1, int(np.ceil(target_time / dt)))
+        effective_time = n_steps * dt
         cfg = {
             "nx": nx,
             "ny": ny,
@@ -360,6 +420,10 @@ def run_fdm_convergence(config: dict[str, Any], paths: dict[str, Path], env: Kar
             "grid_index": idx,
             "nx": nx,
             "ny": ny,
+            "n_steps": n_steps,
+            "dt": dt,
+            "target_time": target_time,
+            "effective_time": effective_time,
             "ncells": ncells,
             "runtime_sec": runtime,
             "cells_per_sec": throughput,
@@ -370,6 +434,28 @@ def run_fdm_convergence(config: dict[str, Any], paths: dict[str, Path], env: Kar
 
         image_file = paths["fdm_images"] / f"fdm_run_{idx:03d}_{nx}x{ny}.png"
         save_final_state_image(ux, uy, obstacle, image_file, f"FDM final state - {nx}x{ny}")
+
+        state_file = paths["fdm_states"] / f"fdm_run_{idx:03d}_{nx}x{ny}.npz"
+        save_final_state_data(
+            ux,
+            uy,
+            rho,
+            obstacle,
+            state_file,
+            metadata={
+                "method": "fdm",
+                "grid_index": idx,
+                "nx": nx,
+                "ny": ny,
+                "n_steps": n_steps,
+                "dt": dt,
+                "target_time": target_time,
+                "effective_time": effective_time,
+                "runtime_sec": runtime,
+                "stable": stable,
+                "config": cfg,
+            },
+        )
         print(f"t={runtime:.2f}s, L2_ux={errors['rel_l2_ux']:.3e}, stable={stable}")
 
     df = pd.DataFrame(rows)
@@ -388,9 +474,13 @@ def run_fem_convergence(config: dict[str, Any], paths: dict[str, Path], env: Kar
 
     rows = []
 
+    target_time = float(config["target_physical_time"])
+
     for idx, (global_maxh, cyl_maxh, export_nx, export_ny) in enumerate(mesh_resolutions, start=1):
         print(f"  FEM {idx}/{len(mesh_resolutions)}: maxh={global_maxh:.4f}...", end=" ", flush=True)
 
+        n_steps = max(1, int(np.ceil(target_time / dt)))
+        effective_time = n_steps * dt
         cfg = {
             "dt": dt,
             "n_steps": n_steps,
@@ -407,7 +497,8 @@ def run_fem_convergence(config: dict[str, Any], paths: dict[str, Path], env: Kar
             "curved_order": 3,
             "probe_point": (0.6, 0.21),
             "num_threads": config["fem_num_threads"],
-            "inverse_name": "umfpack",
+            "inverse_name": "cg",
+            "preconditioner_name": "amg",
             "export_nx": export_nx,
             "export_ny": export_ny,
         }
@@ -430,6 +521,10 @@ def run_fem_convergence(config: dict[str, Any], paths: dict[str, Path], env: Kar
             "cyl_maxh": cyl_maxh,
             "export_nx": export_nx,
             "export_ny": export_ny,
+            "n_steps": n_steps,
+            "dt": dt,
+            "target_time": target_time,
+            "effective_time": effective_time,
             "ncells": ncells,
             "runtime_sec": runtime,
             "cells_per_sec": throughput,
@@ -440,6 +535,30 @@ def run_fem_convergence(config: dict[str, Any], paths: dict[str, Path], env: Kar
 
         image_file = paths["fem_images"] / f"fem_run_{idx:03d}_{export_nx}x{export_ny}.png"
         save_final_state_image(ux, uy, obstacle, image_file, f"FEM final state - {export_nx}x{export_ny}")
+
+        state_file = paths["fem_states"] / f"fem_run_{idx:03d}_{export_nx}x{export_ny}.npz"
+        save_final_state_data(
+            ux,
+            uy,
+            rho,
+            obstacle,
+            state_file,
+            metadata={
+                "method": "fem",
+                "mesh_index": idx,
+                "global_maxh": global_maxh,
+                "cyl_maxh": cyl_maxh,
+                "export_nx": export_nx,
+                "export_ny": export_ny,
+                "n_steps": n_steps,
+                "dt": dt,
+                "target_time": target_time,
+                "effective_time": effective_time,
+                "runtime_sec": runtime,
+                "stable": stable,
+                "config": cfg,
+            },
+        )
         print(f"t={runtime:.2f}s, L2_ux={errors['rel_l2_ux']:.3e}, stable={stable}")
 
     df = pd.DataFrame(rows)
@@ -449,27 +568,24 @@ def run_fem_convergence(config: dict[str, Any], paths: dict[str, Path], env: Kar
 
 def build_run_config() -> dict[str, Any]:
     """Build configuration with user-selectable method sweeps."""
+    base_x = 220
+    base_y = 41
     config = {
         # General
         "u_inlet": 0.12,
+        "target_physical_time": 100.0,
         "convergence_reynolds": 150.0,
-        "force_recompute_benchmark": True,
+        "force_recompute_benchmark": False,
 
         # Benchmark LBM (coarse resolution reference)
-        "benchmark_nx": 220*10,
-        "benchmark_ny": 41*10,
-        "benchmark_steps": int(10000*1.8761),
+        "benchmark_nx": base_x*10,
+        "benchmark_ny": base_y*10,
         "benchmark_re": 150.0,
         "benchmark_velocity_ramp_tau": 1000.0,
 
         # LBM convergence sweep (grid refinement)
         "run_lbm_convergence": True,
-        "lbm_grid_sizes": [
-            (110, 20),
-            (165, 30),
-            (220, 41),
-            (275, 60),
-        ],
+        "lbm_grid_sizes": [(int(base_x * s), int(base_y * s)) for s in (1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5)],
         "lbm_convergence_steps": 10000,
 
         # FDM convergence sweep (grid refinement)
@@ -503,7 +619,7 @@ def build_run_config() -> dict[str, Any]:
         # Small benchmark
         config["benchmark_nx"] = 80
         config["benchmark_ny"] = 32
-        config["benchmark_steps"] = 1000
+        config["target_physical_time"] = 10.0
         config["benchmark_velocity_ramp_tau"] = 100.0
 
         # Tiny sweeps
@@ -532,13 +648,14 @@ def run_analysis(config: dict[str, Any]) -> None:
     print("STEP 1: Benchmark LBM Run")
     print("=" * 70)
 
+    benchmark_steps = lbm_steps_for_target_time(config["benchmark_nx"], float(config["target_physical_time"]))
     benchmark_cfg = {
         "nx": config["benchmark_nx"],
         "ny": config["benchmark_ny"],
         "u_inlet": config["u_inlet"],
         "reynolds_number": config["benchmark_re"],
-        "n_steps": config["benchmark_steps"],
-        "vis_interval": max(100, config["benchmark_steps"] // 20),
+        "n_steps": benchmark_steps,
+        "vis_interval": max(100, benchmark_steps // 20),
         "velocity_ramp_tau": config["benchmark_velocity_ramp_tau"],
         "inlet_bc": "regularized",
         "outlet_bc": "open",
@@ -569,10 +686,31 @@ def run_analysis(config: dict[str, Any]) -> None:
         title=f"Benchmark LBM final state - {config['benchmark_nx']}x{config['benchmark_ny']}",
     )
 
+    benchmark_state_file = paths["benchmark"] / "lbm_benchmark_final_state.npz"
+    save_final_state_data(
+        ref["ux"],
+        ref["uy"],
+        ref["rho"],
+        ref["obstacle"],
+        benchmark_state_file,
+        metadata={
+            "method": "lbm_benchmark",
+            "nx": config["benchmark_nx"],
+            "ny": config["benchmark_ny"],
+            "target_time": config["target_physical_time"],
+            "runtime_sec": bench_runtime,
+            "used_cache": used_cache,
+            "config": benchmark_cfg,
+        },
+    )
+
     print(f"Benchmark: {config['benchmark_nx']}x{config['benchmark_ny']} grid")
+    print(f"  Target physical time: {config['target_physical_time']}")
+    print(f"  Steps (LBM mapping): {benchmark_steps}")
     print(f"  Status: {'loaded from cache' if used_cache else 'freshly computed'}")
     print(f"  Runtime: {bench_runtime:.2f}s")
     print(f"  Benchmark image: {benchmark_image}")
+    print(f"  Benchmark state: {benchmark_state_file}")
 
     # 2) Run selected convergence sweeps
     print("\n" + "=" * 70)
@@ -594,15 +732,19 @@ def run_analysis(config: dict[str, Any]) -> None:
     print("=" * 70)
     print(f"Benchmark: {paths['benchmark'] / 'lbm_benchmark.npz'}")
     print(f"Benchmark image: {benchmark_image}")
+    print(f"Benchmark state: {benchmark_state_file}")
     if config["run_lbm_convergence"]:
         print(f"LBM convergence: {paths['lbm_convergence'] / 'results.csv'}")
         print(f"LBM final images: {paths['lbm_images']}")
+        print(f"LBM final states: {paths['lbm_states']}")
     if config["run_fdm_convergence"]:
         print(f"FDM convergence: {paths['fdm_convergence'] / 'results.csv'}")
         print(f"FDM final images: {paths['fdm_images']}")
+        print(f"FDM final states: {paths['fdm_states']}")
     if config["run_fem_convergence"]:
         print(f"FEM convergence: {paths['fem_convergence'] / 'results.csv'}")
         print(f"FEM final images: {paths['fem_images']}")
+        print(f"FEM final states: {paths['fem_states']}")
 
     print("\n✓ Convergence study complete.")
 

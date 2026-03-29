@@ -97,7 +97,8 @@ def main():
         curved_order=3,
         probe_point=(0.6, 0.21),
         num_threads=8,                  # adjust to your machine
-        inverse_name="umfpack",
+        inverse_name="cg",
+        preconditioner_name="amg",
         verbose=True,)
 
     print("      Solver configuration:")
