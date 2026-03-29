@@ -276,7 +276,7 @@ class EnvironmentVisualizer:
 class FlowFieldPlotter:
     """Real-time/static field plotting independent of the solver."""
 
-    def __init__(self, nx, ny, obstacle=None, figsize=(12, 5), dpi=100):
+    def __init__(self, nx, ny, obstacle=None, figsize=(22, 4), dpi=100):
         self.nx = nx
         self.ny = ny
         self.obstacle = obstacle if obstacle is not None else np.zeros((nx, ny), dtype=bool)
@@ -475,7 +475,7 @@ class SimulationVisualizer:
         fps=30,
         record_video=False,
         video_filename="simulation.mp4",
-        figsize=(12, 5),
+        figsize=(22, 4),
         dpi=100,
     ):
         self.plotter = FlowFieldPlotter(nx, ny, obstacle, figsize, dpi)

@@ -142,7 +142,7 @@ def main():
         metadata["nx"],
         metadata["ny"],
         obstacle=obstacle,
-        figsize=(14, 6),
+        figsize=(22, 4),
         dpi=100,
     )
 

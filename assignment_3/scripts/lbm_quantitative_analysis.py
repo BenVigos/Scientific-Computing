@@ -32,6 +32,29 @@ from envirmonment import KarmannVortex  # noqa: E402
 from solvers import LBMSolver, FDMSolver, FEMSolver  # noqa: E402
 
 
+def _normalize_result(result: dict[str, Any], method: str) -> dict[str, Any]:
+    """Ensure a common result schema across methods."""
+    if "ux" not in result or "uy" not in result:
+        missing = [k for k in ("ux", "uy") if k not in result]
+        raise ValueError(f"{method} result missing keys: {missing}")
+
+    ux = result["ux"]
+    uy = result["uy"]
+    if ux.shape != uy.shape:
+        raise ValueError(f"{method} returned ux/uy with mismatched shapes: {ux.shape} vs {uy.shape}")
+
+    # FDM/FEM may not return rho explicitly; use constant density from metadata or 1.0.
+    if "rho" not in result:
+        rho_val = float(result.get("metadata", {}).get("rho", 1.0))
+        result["rho"] = np.full_like(ux, rho_val, dtype=np.float64)
+
+    # Ensure obstacle exists for fluid masking; default to all-fluid.
+    if "obstacle" not in result:
+        result["obstacle"] = np.zeros_like(ux, dtype=bool)
+
+    return result
+
+
 @dataclass
 class SweepSpec:
     method: str
@@ -182,19 +205,33 @@ def apply_bc_once(u: np.ndarray, v: np.ndarray, bc: dict[str, Any], masks: dict[
 
 
 def run_fdm(env: KarmannVortex, cfg: dict[str, Any]) -> dict[str, Any]:
-   solver = FDMSolver(environment=env, **cfg)
-    return solver.solve(verbose=False)
+    solver = FDMSolver(environment=env, **cfg)
+    result = solver.solve(verbose=False)
+    return _normalize_result(result, "fdm")
+
 
 def run_fem(env: KarmannVortex, cfg: dict[str, Any]) -> dict[str, Any]:
-    solver = FEMSolver(environment=env, **cfg)
-    return solver.solve(verbose=False)
+    # export grid settings belong to solve(), not __init__
+    init_cfg = dict(cfg)
+    export_nx = int(init_cfg.pop("export_nx", 301))
+    export_ny = int(init_cfg.pop("export_ny", 121))
+
+    solver = FEMSolver(environment=env, **init_cfg)
+    result = solver.solve(verbose=False, export_nx=export_nx, export_ny=export_ny)
+    return _normalize_result(result, "fem")
+
 
 def run_lbm(env: KarmannVortex, cfg: dict[str, Any]) -> dict[str, Any]:
     solver = LBMSolver(environment=env, **cfg)
-    return solver.solve(verbose=False)
+    result = solver.solve(verbose=False)
+    return _normalize_result(result, "lbm")
 
 
-def make_sweeps(nx: int, ny: int, n_steps: int, u_inlet: float) -> list[SweepSpec]:
+def make_sweeps(config: dict[str, Any]) -> list[SweepSpec]:
+    nx = int(config["test_nx"])
+    ny = int(config["test_ny"])
+    n_steps = int(config["test_steps"])
+    u_inlet = float(config["u_inlet"])
     sponge = max(0, int(0.05 * nx))
     return [
         SweepSpec(
@@ -222,10 +259,10 @@ def make_sweeps(nx: int, ny: int, n_steps: int, u_inlet: float) -> list[SweepSpe
         SweepSpec(
             method="fdm",
             grid={
-                "nx": [config["fdm_base_nx"]],
-                "ny": [config["fdm_base_ny"]],
-                "dt": [config["fdm_base_dt"]],
-                "n_steps": [config["fdm_base_n_steps"]],
+                "nx": [int(config["fdm_base_nx"])],
+                "ny": [int(config["fdm_base_ny"])],
+                "dt": [float(config["fdm_base_dt"])],
+                "n_steps": [int(config["fdm_base_n_steps"])],
                 "rho": [1.0],
                 "adaptive_dt": [True],
                 "cfl_safety": [0.20],
@@ -243,10 +280,10 @@ def make_sweeps(nx: int, ny: int, n_steps: int, u_inlet: float) -> list[SweepSpe
         SweepSpec(
             method="fem",
             grid={
-                "dt": [config["fem_base_dt"]],
-                "n_steps": [config["fem_base_n_steps"]],
-                "global_maxh": [config["fem_base_global_maxh"]],
-                "cyl_maxh": [config["fem_base_cyl_maxh"]],
+                "dt": [float(config["fem_base_dt"])],
+                "n_steps": [int(config["fem_base_n_steps"])],
+                "global_maxh": [float(config["fem_base_global_maxh"])],
+                "cyl_maxh": [float(config["fem_base_cyl_maxh"])],
                 "order": [2],
                 "reynolds_number": [150, 300, 500, 1000],
                 "rho": [1.0],
@@ -257,10 +294,10 @@ def make_sweeps(nx: int, ny: int, n_steps: int, u_inlet: float) -> list[SweepSpe
                 "stokes_start": [True],
                 "curved_order": [3],
                 "probe_point": [(0.6, 0.21)],
-                "num_threads": [config["fem_num_threads"]],
+                "num_threads": [int(config["fem_num_threads"])],
                 "inverse_name": ["umfpack"],
-                "export_nx": [config["fem_export_nx"]],
-                "export_ny": [config["fem_export_ny"]],
+                "export_nx": [int(config["fem_export_nx"])],
+                "export_ny": [int(config["fem_export_ny"])],
             },
         ),
     ]
@@ -388,7 +425,7 @@ def run_analysis(config: dict[str, Any]) -> None:
         force_recompute=bool(config["force_recompute_benchmark"]),
     )
 
-    sweeps = make_sweeps(config["test_nx"], config["test_ny"], config["test_steps"], config["u_inlet"])
+    sweeps = make_sweeps(config)
     cases = expand_cases(sweeps)
 
     runners: dict[str, Callable[[KarmannVortex, dict[str, Any]], dict[str, Any]]] = {

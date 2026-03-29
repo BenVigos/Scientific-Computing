@@ -64,7 +64,7 @@ def main():
         ny=int(41*scaling),
         u_inlet=0.12,
         reynolds_number=750,
-        n_steps=10000,  # Full run
+        n_steps=200,  # Full run
         vis_interval=500,
         velocity_ramp_tau=1000,
         inlet_bc = 'regularized',
@@ -114,7 +114,7 @@ def main():
         metadata['nx'],
         metadata['ny'],
         obstacle=obstacle,
-        figsize=(14, 6),
+        figsize=(22, 4),
         dpi=100
     )
 
