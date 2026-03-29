@@ -10,7 +10,7 @@ This script mirrors the FDM/LBM example structure:
 """
 
 import sys
-sys.path.insert(0, "src")
+sys.path.insert(0, "../../src")
 
 import os
 import numpy as np

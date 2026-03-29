@@ -14,7 +14,7 @@ This version is written for the updated FDMSolver that supports:
 """
 
 import sys
-sys.path.insert(0, 'src')
+sys.path.insert(0, '../../src')
 
 import os
 import numpy as np

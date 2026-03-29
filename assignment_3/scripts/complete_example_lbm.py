@@ -10,7 +10,7 @@ This script demonstrates:
 """
 
 import sys
-sys.path.insert(0, 'src')
+sys.path.insert(0, '../../src')
 
 import os
 import numpy as np
@@ -69,7 +69,7 @@ def main():
     print("=" * 70)
 
     # Create output directory
-    os.makedirs('assignment_3/outputs', exist_ok=True)
+    os.makedirs('../outputs', exist_ok=True)
 
     # =====================================================================
     # Step 1: Environment setup image
